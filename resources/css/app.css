@@ -48,7 +48,7 @@
     @apply bg-[#fce8e6] text-[#c5221f] dark:bg-[#c5221f]/20 dark:text-[#f28b82] border border-[#c5221f]/10 dark:border-[#f28b82]/20;
   }
   .badge-info {
-    @apply bg-brand-50 text-brand-700 dark:bg-brand-500/20 dark:text-brand-400 border border-brand-500/10 dark:border-brand-500/20;
+    @apply bg-brand-50 text-brand-700 dark:bg-brand-500/20 dark:text-brand-100 border border-brand-500/10 dark:border-brand-500/20;
   }
 }
 

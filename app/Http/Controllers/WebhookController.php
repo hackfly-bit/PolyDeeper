@@ -2,9 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Jobs\ProcessWalletTradeJob;
+use App\Models\ExecutionLog;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class WebhookController extends Controller
@@ -17,10 +18,18 @@ class WebhookController extends Controller
         // Example for Moralis streams
         $payload = $request->all();
 
-        Log::info("Webhook received", ['payload' => $payload]);
+        Log::info('Webhook received', ['payload' => $payload]);
 
         // Basic validation
-        if (!$request->has('logs')) {
+        if (! $request->has('logs')) {
+            ExecutionLog::create([
+                'stage' => 'webhook_ignored',
+                'status' => 'warning',
+                'message' => 'Webhook ignored because logs key is missing.',
+                'context' => ['payload_keys' => array_keys($payload)],
+                'occurred_at' => now(),
+            ]);
+
             return response()->json(['status' => 'ignored']);
         }
 
@@ -35,6 +44,21 @@ class WebhookController extends Controller
                 'size' => 500,
                 'timestamp' => time(),
             ];
+
+            ExecutionLog::create([
+                'stage' => 'webhook_received',
+                'market_id' => $tradeData['market_id'],
+                'wallet_address' => $tradeData['wallet'],
+                'action' => 'INGEST',
+                'status' => 'info',
+                'message' => 'Webhook event accepted and queued for trade processing.',
+                'context' => [
+                    'side' => $tradeData['side'],
+                    'price' => $tradeData['price'],
+                    'size' => $tradeData['size'],
+                ],
+                'occurred_at' => now(),
+            ]);
 
             ProcessWalletTradeJob::dispatch($tradeData);
         }
