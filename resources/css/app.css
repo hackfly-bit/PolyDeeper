@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-brand-50: #f0f7ff;
+    --color-brand-100: #e0effe;
+    --color-brand-500: #0055ff;
+    --color-brand-600: #0044cc;
+    --color-brand-700: #003399;
+    --color-brand-900: #001a4d;
+    --color-dark-bg: #030303;
+    --color-dark-surface: #0a0a0a;
+    --color-dark-border: #1a1a1a;
+  }
+  
+  body {
+    @apply bg-[#fbfcfd] text-gray-900 antialiased transition-colors duration-300 font-sans;
+  }
+
+  body.dark {
+    @apply bg-dark-bg text-gray-100;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading tracking-tight;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-gray-100 rounded-2xl shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] dark:bg-dark-surface dark:border-dark-border dark:shadow-none transition-all duration-300;
+  }
+  .card-hover {
+    @apply hover:shadow-[0_8px_30px_-4px_rgba(0,0,0,0.1)] dark:hover:border-gray-800 hover:-translate-y-0.5;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-5 py-2.5 text-sm font-medium text-white bg-brand-600 border border-transparent rounded-xl shadow-sm hover:bg-brand-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500 dark:focus:ring-offset-dark-bg transition-all duration-200 active:scale-95;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider;
+  }
+  .badge-success {
+    @apply bg-[#e6f4ea] text-[#137333] dark:bg-[#137333]/20 dark:text-[#5bb974] border border-[#137333]/10 dark:border-[#5bb974]/20;
+  }
+  .badge-danger {
+    @apply bg-[#fce8e6] text-[#c5221f] dark:bg-[#c5221f]/20 dark:text-[#f28b82] border border-[#c5221f]/10 dark:border-[#f28b82]/20;
+  }
+  .badge-info {
+    @apply bg-brand-50 text-brand-700 dark:bg-brand-500/20 dark:text-brand-400 border border-brand-500/10 dark:border-brand-500/20;
+  }
+}
+
+@layer utilities {
+  .font-heading {
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+  .font-sans {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  .font-mono {
+    font-family: 'Space Mono', monospace;
+  }
+  .animate-fade-in-up {
+    animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Staggered animation delays */
+.delay-100 { animation-delay: 100ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }
