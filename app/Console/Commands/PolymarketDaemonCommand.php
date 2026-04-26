@@ -61,6 +61,10 @@ class PolymarketDaemonCommand extends Command
             $response = Http::baseUrl(rtrim((string) config('services.polymarket.data_host'), '/'))
                 ->timeout((int) config('services.polymarket.timeout_seconds', 15))
                 ->acceptJson()
+                ->withOptions([
+                    'verify' => false,
+                ])
+                ->retry(2, 300)
                 ->get('/trades', [
                     'maker_addresses' => implode(',', $wallets),
                     'start_ts' => $sinceTimestamp,

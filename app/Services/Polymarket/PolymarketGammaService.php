@@ -15,6 +15,9 @@ class PolymarketGammaService
         $response = Http::baseUrl($this->gammaHost())
             ->timeout((int) config('services.polymarket.timeout_seconds', 15))
             ->acceptJson()
+            ->withOptions([
+                'verify' => false,
+            ])
             ->retry(2, 300)
             ->get('/markets', [
                 'active' => $active ? 'true' : 'false',
