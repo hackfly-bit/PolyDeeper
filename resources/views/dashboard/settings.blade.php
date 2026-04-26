@@ -2,12 +2,27 @@
 
 @section('content')
 <div class="max-w-4xl mx-auto space-y-6">
+    @php
+        $serverBadgeMap = [
+            'healthy' => ['label' => 'Online', 'class' => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'],
+            'degraded' => ['label' => 'Perlu Cek', 'class' => 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'],
+            'down' => ['label' => 'Offline', 'class' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'],
+            'missing' => ['label' => 'Belum Diisi', 'class' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'],
+        ];
+        $accountBadgeMap = [
+            'active' => ['label' => 'Active', 'class' => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'],
+            'needs_rotation' => ['label' => 'Needs Rotation', 'class' => 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'],
+            'revoked' => ['label' => 'Revoked', 'class' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'],
+            'validation_failed' => ['label' => 'Validation Failed', 'class' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'],
+            'pending' => ['label' => 'Pending', 'class' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'],
+        ];
+    @endphp
     <div class="card p-6">
         <div class="flex items-start justify-between gap-4">
             <div>
                 <h2 class="text-lg font-bold text-gray-900 dark:text-white">Polymarket Credentials</h2>
                 <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    Private key signer hanya dari backend env/vault. Kredensial L2 disimpan terenkripsi di database.
+                    Account aktif menjadi satu-satunya sumber auth trading. User cukup isi wallet address dan referensi private key backend, lalu tekan validate untuk membuat atau me-derive credential L2 secara otomatis.
                 </p>
             </div>
             <a href="{{ route('settings.polymarket.accounts.index') }}" class="rounded-xl border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">
@@ -56,37 +71,147 @@
         <div class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Account Aktif</p>
-                <p class="mt-2 font-semibold text-gray-900 dark:text-white">{{ $polymarketConfig['account_name'] ?? 'Belum dipilih' }}</p>
+                <p class="mt-2 font-semibold text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->name ?? 'Belum dipilih' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Credential Status</p>
-                <p class="mt-2 font-semibold text-gray-900 dark:text-white">{{ $polymarketConfig['credential_status'] }}</p>
+                <p class="mt-2 font-semibold text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->credential_status ?? 'not_configured' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Signer Address</p>
-                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $polymarketConfig['address'] ?? '-' }}</p>
+                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->wallet_address ?? '-' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Funder Address</p>
-                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $polymarketConfig['funder'] ?? '-' }}</p>
+                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->funder_address ?? '-' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Signature Type</p>
-                <p class="mt-2 text-gray-900 dark:text-white">{{ $polymarketConfig['signature_type'] }}</p>
+                <p class="mt-2 text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->signature_type ?? '-' }}</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
+                <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Private Key Source</p>
+                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->env_key_name ?? '-' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">API Key</p>
-                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $polymarketConfig['masked_api_key'] ?? 'belum ada' }}</p>
+                <p class="mt-2 font-mono text-gray-900 dark:text-white">{{ $selectedPolymarketMaskedApiKey ?? 'belum ada' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">API Secret</p>
-                <p class="mt-2 text-gray-900 dark:text-white">{{ $polymarketConfig['has_api_secret'] ? 'tersimpan' : 'belum ada' }}</p>
+                <p class="mt-2 text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->api_secret ? 'tersimpan' : 'belum ada' }}</p>
             </div>
             <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
                 <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">API Passphrase</p>
-                <p class="mt-2 text-gray-900 dark:text-white">{{ $polymarketConfig['has_api_passphrase'] ? 'tersimpan' : 'belum ada' }}</p>
+                <p class="mt-2 text-gray-900 dark:text-white">{{ $selectedPolymarketAccount?->api_passphrase ? 'tersimpan' : 'belum ada' }}</p>
             </div>
         </div>
+
+        <div class="mt-6">
+            <div>
+                <h3 class="text-base font-bold text-gray-900 dark:text-white">Status Server Polymarket</h3>
+                <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                    Probe ringan ke endpoint utama Polymarket untuk melihat konektivitas dashboard ke CLOB, Gamma, dan Data API.
+                </p>
+            </div>
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                @foreach ($polymarketServerStatuses as $server)
+                    @php
+                        $serverBadge = $serverBadgeMap[$server['state']] ?? ['label' => ucfirst((string) $server['state']), 'class' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'];
+                    @endphp
+                    <div class="rounded-xl border border-gray-200 p-4 dark:border-dark-border">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <p class="font-semibold text-gray-900 dark:text-white">{{ $server['name'] }}</p>
+                                <p class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ $server['host'] }}</p>
+                            </div>
+                            <span class="inline-flex rounded-full px-2 py-1 text-[11px] font-semibold {{ $serverBadge['class'] }}">
+                                {{ $serverBadge['label'] }}
+                            </span>
+                        </div>
+                        <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">Probe: <span class="font-mono">{{ $server['probe'] }}</span></p>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">HTTP Status: <span class="font-mono">{{ $server['http_status'] ?? 'n/a' }}</span></p>
+                        <p class="mt-3 text-sm text-gray-700 dark:text-gray-300">{{ $server['message'] }}</p>
+                    </div>
+                @endforeach
+            </div>
+        </div>
+
+        @if ($selectedPolymarketAccount)
+            <div class="mt-6">
+                <div>
+                    <h3 class="text-base font-bold text-gray-900 dark:text-white">Akun Pada Wallet Ini</h3>
+                    <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        {{ $selectedPolymarketWalletAccounts->count() }} account lokal memakai signer address ini.
+                    </p>
+                </div>
+                <div class="mt-4 space-y-3">
+                    @forelse ($selectedPolymarketWalletAccounts as $walletAccount)
+                        @php
+                            $accountBadge = $accountBadgeMap[$walletAccount->credential_status] ?? ['label' => ucfirst((string) $walletAccount->credential_status), 'class' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'];
+                        @endphp
+                        <div class="rounded-xl border p-4 {{ $selectedPolymarketAccount->id === $walletAccount->id ? 'border-brand-200 bg-brand-50/40 dark:border-brand-800/50 dark:bg-brand-900/10' : 'border-gray-200 dark:border-dark-border' }}">
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <p class="font-semibold text-gray-900 dark:text-white">{{ $walletAccount->name }}</p>
+                                        @if ($selectedPolymarketAccount->id === $walletAccount->id)
+                                            <span class="inline-flex rounded-full bg-brand-100 px-2 py-1 text-[11px] font-semibold text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
+                                                Aktif Dipakai
+                                            </span>
+                                        @endif
+                                        <span class="inline-flex rounded-full px-2 py-1 text-[11px] font-semibold {{ $walletAccount->is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' }}">
+                                            {{ $walletAccount->is_active ? 'Trading On' : 'Trading Off' }}
+                                        </span>
+                                    </div>
+                                    <p class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ $walletAccount->wallet_address }}</p>
+                                </div>
+                                <span class="inline-flex rounded-full px-2 py-1 text-[11px] font-semibold {{ $accountBadge['class'] }}">
+                                    {{ $accountBadge['label'] }}
+                                </span>
+                            </div>
+                            <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                                    <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Env Key</p>
+                                    <p class="mt-2 break-all font-mono text-gray-900 dark:text-white">{{ $walletAccount->env_key_name }}</p>
+                                </div>
+                                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                                    <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Last Validation</p>
+                                    <p class="mt-2 text-gray-900 dark:text-white">{{ $walletAccount->last_validated_at?->toDateTimeString() ?? '-' }}</p>
+                                </div>
+                                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                                    <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Last Error</p>
+                                    <p class="mt-2 break-all text-gray-900 dark:text-white">{{ $walletAccount->last_error_code ?? '-' }}</p>
+                                </div>
+                            </div>
+                            <div class="mt-4 flex justify-end">
+                                <a href="{{ route('settings.polymarket.accounts.show', $walletAccount) }}" class="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                                    Buka Detail Account
+                                </a>
+                            </div>
+                        </div>
+                    @empty
+                        <div class="rounded-xl border border-dashed border-gray-300 px-4 py-5 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                            Belum ada account lokal yang memakai wallet address ini.
+                        </div>
+                    @endforelse
+                </div>
+            </div>
+        @endif
+
+        @if ($selectedPolymarketAccount)
+            <div class="mt-5 flex flex-wrap gap-2">
+                <a href="{{ route('settings.polymarket.accounts.show', $selectedPolymarketAccount) }}" class="btn-primary text-sm px-4 py-2">
+                    Buka Detail Account
+                </a>
+                <form method="POST" action="{{ route('settings.polymarket.accounts.validate', $selectedPolymarketAccount) }}">
+                    @csrf
+                    <button type="submit" class="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                        Validate Dan Sync Credential
+                    </button>
+                </form>
+            </div>
+        @endif
     </div>
 
     <div class="card p-6">
@@ -110,21 +235,6 @@
             </div>
         </div>
     </div>
-    <div class="card p-6">
-        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Health Check</h2>
-        <p class="mt-3 text-sm text-gray-700 dark:text-gray-300">
-            Redis Status:
-            <span class="{{ $runtime['redis_reachable'] ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400' }}">
-                {{ $runtime['redis_reachable'] ? 'reachable' : 'unavailable' }}
-            </span>
-        </p>
-        <p class="mt-2 text-sm text-gray-700 dark:text-gray-300">Pending Jobs: <span class="font-mono">{{ number_format($runtime['jobs_pending']) }}</span></p>
-        <p class="mt-2 text-sm text-gray-700 dark:text-gray-300">Failed Jobs: <span class="font-mono">{{ number_format($runtime['jobs_failed']) }}</span></p>
-        @if (!empty($runtime['redis_error']))
-            <div class="mt-4 rounded-xl border border-red-200 bg-red-50 dark:bg-red-500/10 dark:border-red-500/20 p-4">
-                <p class="text-sm text-red-700 dark:text-red-300">{{ $runtime['redis_error'] }}</p>
-            </div>
-        @endif
-    </div>
+    @livewire(\App\Livewire\Dashboard\SettingsHealthCheck::class, [], key('settings-health-check'))
 </div>
 @endsection

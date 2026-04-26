@@ -1,10 +1,13 @@
 import './bootstrap';
-import Alpine from 'alpinejs';
-
-window.Alpine = Alpine;
 
 // Dark mode initialization
 document.addEventListener('alpine:init', () => {
+    const Alpine = window.Alpine;
+
+    if (! Alpine) {
+        return;
+    }
+
     Alpine.store('darkMode', {
         on: false,
         
@@ -31,5 +34,3 @@ document.addEventListener('alpine:init', () => {
         }
     });
 });
-
-Alpine.start();

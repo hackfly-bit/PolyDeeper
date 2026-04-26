@@ -6,7 +6,7 @@
         <div class="flex items-center justify-between gap-3">
             <div>
                 <h2 class="text-lg font-bold text-gray-900 dark:text-white">Polymarket Accounts</h2>
-                <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Kelola multi-wallet account untuk runtime trading.</p>
+                <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Buat account dengan data dasar auth: nama, wallet address, signature type, funder address bila perlu, dan referensi private key backend.</p>
             </div>
         </div>
 
@@ -41,11 +41,11 @@
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Wallet Address</label>
-                <input name="wallet_address" type="text" value="{{ old('wallet_address') }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <input name="wallet_address" type="text" value="{{ old('wallet_address') }}" required class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Funder Address</label>
-                <input name="funder_address" type="text" value="{{ old('funder_address') }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <input name="funder_address" type="text" value="{{ old('funder_address') }}" placeholder="Opsional, auto diisi wallet untuk signature type 0" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Signature Type</label>
@@ -56,32 +56,8 @@
                 </select>
             </div>
             <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Vault Key Ref</label>
-                <input name="vault_key_ref" type="text" value="{{ old('vault_key_ref') }}" placeholder="Opsional" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Priority</label>
-                <input name="priority" type="number" min="1" max="10000" value="{{ old('priority', 100) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Risk Profile</label>
-                <select name="risk_profile" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
-                    <option value="conservative" @selected(old('risk_profile') === 'conservative')>conservative</option>
-                    <option value="standard" @selected(old('risk_profile', 'standard') === 'standard')>standard</option>
-                    <option value="aggressive" @selected(old('risk_profile') === 'aggressive')>aggressive</option>
-                </select>
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Exposure USD</label>
-                <input name="max_exposure_usd" type="number" step="0.01" min="0" value="{{ old('max_exposure_usd') }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Order Size</label>
-                <input name="max_order_size" type="number" step="0.000001" min="0" value="{{ old('max_order_size') }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Cooldown (detik)</label>
-                <input name="cooldown_seconds" type="number" min="0" max="3600" value="{{ old('cooldown_seconds', 30) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Env Key Name</label>
+                <input name="env_key_name" type="text" value="{{ old('env_key_name') }}" required placeholder="Contoh: POLYMARKET_PK_MAIN" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div class="md:col-span-2 flex justify-end">
                 <button type="submit" class="btn-primary text-sm px-4 py-2">Create Account</button>
@@ -99,7 +75,7 @@
                     <tr>
                         <th class="px-4 py-3">Name</th>
                         <th class="px-4 py-3">Wallet</th>
-                        <th class="px-4 py-3">Vault Ref</th>
+                        <th class="px-4 py-3">Key Source</th>
                         <th class="px-4 py-3">Status</th>
                         <th class="px-4 py-3">Trading</th>
                         <th class="px-4 py-3 text-right">Action</th>
@@ -119,7 +95,7 @@
                         <tr>
                             <td class="px-4 py-4">{{ $account->name }}</td>
                             <td class="px-4 py-4 font-mono text-xs">{{ $account->wallet_address ?? '-' }}</td>
-                            <td class="px-4 py-4 font-mono text-xs">{{ $account->vault_key_ref ?? '-' }}</td>
+                            <td class="px-4 py-4 font-mono text-xs">{{ $account->env_key_name ?? '-' }}</td>
                             <td class="px-4 py-4">
                                 <span class="inline-flex rounded-full px-2 py-1 text-xs font-semibold {{ $badge['class'] }}">
                                     {{ $badge['label'] }}

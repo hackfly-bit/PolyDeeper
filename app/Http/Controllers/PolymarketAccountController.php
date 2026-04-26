@@ -36,10 +36,10 @@ class PolymarketAccountController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'wallet_address' => ['nullable', 'string', 'max:255'],
+            'wallet_address' => ['required', 'string', 'max:255'],
             'funder_address' => ['nullable', 'string', 'max:255'],
             'signature_type' => ['required', 'integer', 'in:0,1,2'],
-            'vault_key_ref' => ['nullable', 'string', 'max:255'],
+            'env_key_name' => ['required', 'string', 'max:255'],
             'priority' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'risk_profile' => ['nullable', 'string', 'in:conservative,standard,aggressive'],
             'max_exposure_usd' => ['nullable', 'numeric', 'min:0'],
@@ -58,11 +58,10 @@ class PolymarketAccountController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'wallet_address' => ['nullable', 'string', 'max:255'],
+            'wallet_address' => ['required', 'string', 'max:255'],
             'funder_address' => ['nullable', 'string', 'max:255'],
             'signature_type' => ['required', 'integer', 'in:0,1,2'],
-            'env_key_name' => ['nullable', 'string', 'max:255'],
-            'vault_key_ref' => ['nullable', 'string', 'max:255'],
+            'env_key_name' => ['required', 'string', 'max:255'],
             'is_active' => ['nullable', 'boolean'],
             'priority' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'risk_profile' => ['nullable', 'string', 'in:conservative,standard,aggressive'],
@@ -77,24 +76,6 @@ class PolymarketAccountController extends Controller
         return redirect()
             ->route('settings.polymarket.accounts.show', $account)
             ->with('account_success', 'Polymarket account berhasil diperbarui.');
-    }
-
-    public function storeCredentials(
-        Request $request,
-        PolymarketAccount $account,
-        PolymarketCredentialService $credentialService
-    ): RedirectResponse {
-        $validated = $request->validate([
-            'api_key' => ['required', 'string', 'max:255'],
-            'api_secret' => ['required', 'string', 'max:255'],
-            'api_passphrase' => ['required', 'string', 'max:255'],
-        ]);
-
-        $credentialService->generateOrStoreCredentials($account, $validated);
-
-        return redirect()
-            ->route('settings.polymarket.accounts.show', $account)
-            ->with('account_success', 'Kredensial account berhasil disimpan.');
     }
 
     public function validateCredentials(PolymarketAccount $account, PolymarketCredentialService $credentialService): RedirectResponse

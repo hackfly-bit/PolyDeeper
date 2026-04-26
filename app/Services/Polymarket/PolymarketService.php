@@ -21,12 +21,10 @@ class PolymarketService
     /**
      * @param  array<string, mixed>  $payload
      */
-    public function postOrder(array $payload, ?PolymarketAccount $account = null): Response
+    public function postOrder(array $payload, PolymarketAccount $account): Response
     {
         $path = '/order';
-        $headers = $account instanceof PolymarketAccount
-            ? $this->authService->buildL2HeadersForAccount($account, 'POST', $path, $payload)
-            : $this->authService->buildL2Headers('POST', $path, $payload);
+        $headers = $this->authService->buildL2HeadersForAccount($account, 'POST', $path, $payload);
 
         $response = $this->request()
             ->withHeaders($headers)
@@ -39,16 +37,14 @@ class PolymarketService
     /**
      * @return array{ok:bool,status:int,rows:array<int, array<string, mixed>>}
      */
-    public function fetchOpenOrders(int $limit = 200, ?PolymarketAccount $account = null): array
+    public function fetchOpenOrders(int $limit, PolymarketAccount $account): array
     {
         $query = [
             'status' => 'open',
             'limit' => $limit,
         ];
         $requestPath = '/data/orders?'.Arr::query($query);
-        $headers = $account instanceof PolymarketAccount
-            ? $this->authService->buildL2HeadersForAccount($account, 'GET', $requestPath)
-            : $this->authService->buildL2Headers('GET', $requestPath);
+        $headers = $this->authService->buildL2HeadersForAccount($account, 'GET', $requestPath);
 
         $response = $this->request()
             ->withHeaders($headers)
@@ -67,16 +63,44 @@ class PolymarketService
     /**
      * @return array{ok:bool,status:int,body:array}
      */
-    public function validateCredentials(?PolymarketAccount $account = null): array
+    public function validateCredentials(PolymarketAccount $account): array
     {
-        $headers = $account instanceof PolymarketAccount
-            ? $this->authService->buildL2HeadersForAccount($account, 'GET', '/data/orders')
-            : $this->authService->buildL2Headers('GET', '/data/orders');
-
         $response = $this->request(2)
-            ->withHeaders($headers)
+            ->withHeaders($this->authService->buildL2HeadersForAccount($account, 'GET', '/data/orders'))
             ->get('/data/orders');
         $this->recordRuntimeSignals($response, $account);
+
+        return [
+            'ok' => $response->successful(),
+            'status' => $response->status(),
+            'body' => $response->json() ?? [],
+        ];
+    }
+
+    /**
+     * @return array{ok:bool,status:int,body:array}
+     */
+    public function deriveApiCredentials(PolymarketAccount $account, string $privateKey, int $nonce = 0): array
+    {
+        $response = $this->request(1)
+            ->withHeaders($this->authService->buildL1HeadersForAccount($account, $privateKey, $nonce))
+            ->get('/auth/derive-api-key');
+
+        return [
+            'ok' => $response->successful(),
+            'status' => $response->status(),
+            'body' => $response->json() ?? [],
+        ];
+    }
+
+    /**
+     * @return array{ok:bool,status:int,body:array}
+     */
+    public function createApiCredentials(PolymarketAccount $account, string $privateKey, int $nonce = 0): array
+    {
+        $response = $this->request(1)
+            ->withHeaders($this->authService->buildL1HeadersForAccount($account, $privateKey, $nonce))
+            ->post('/auth/api-key');
 
         return [
             'ok' => $response->successful(),
@@ -98,6 +122,10 @@ class PolymarketService
         return Http::baseUrl($this->clobHost())
             ->timeout($this->timeoutSeconds())
             ->acceptJson()
+            ->withOptions([
+                // 'verify' => $this->tlsVerifyOption(),
+                'verify' => false,
+            ])
             ->retry(
                 $maxRetries,
                 function (int $attempt, Throwable $exception): int {
@@ -143,5 +171,19 @@ class PolymarketService
     private function timeoutSeconds(): int
     {
         return (int) config('services.polymarket.timeout_seconds', 15);
+    }
+
+    /**
+     * @return bool|string
+     */
+    private function tlsVerifyOption(): bool|string
+    {
+        $caBundle = trim((string) config('services.polymarket.ca_bundle', ''));
+
+        if ($caBundle !== '') {
+            return $caBundle;
+        }
+
+        return (bool) config('services.polymarket.tls_verify', true);
     }
 }

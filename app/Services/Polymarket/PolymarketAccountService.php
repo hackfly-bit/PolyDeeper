@@ -16,11 +16,10 @@ class PolymarketAccountService
     /**
      * @param  array{
      *     name:string,
-     *     wallet_address?:?string,
+     *     wallet_address:string,
      *     funder_address?:?string,
      *     signature_type:int,
-     *     env_key_name?:?string,
-     *     vault_key_ref?:?string,
+     *     env_key_name:string,
      *     priority?:?int,
      *     risk_profile?:?string,
      *     max_exposure_usd?:?float,
@@ -31,15 +30,20 @@ class PolymarketAccountService
     public function create(array $payload): PolymarketAccount
     {
         $name = trim($payload['name']);
+        $walletAddress = trim((string) ($payload['wallet_address'] ?? ''));
+        $funderAddress = $this->normalizeFunderAddress(
+            $payload['funder_address'] ?? null,
+            $payload['signature_type'],
+            $walletAddress
+        );
 
         $account = PolymarketAccount::query()->create([
             'name' => $name,
             'account_slug' => Str::slug($name).'-'.Str::lower(Str::random(6)),
-            'wallet_address' => $payload['wallet_address'] ?? null,
-            'funder_address' => $payload['funder_address'] ?? null,
+            'wallet_address' => $walletAddress,
+            'funder_address' => $funderAddress,
             'signature_type' => $payload['signature_type'],
-            'env_key_name' => $payload['env_key_name'] ?? null,
-            'vault_key_ref' => $payload['vault_key_ref'] ?? null,
+            'env_key_name' => trim((string) ($payload['env_key_name'] ?? '')),
             'priority' => $payload['priority'] ?? 100,
             'risk_profile' => $payload['risk_profile'] ?? 'standard',
             'max_exposure_usd' => $payload['max_exposure_usd'] ?? null,
@@ -62,11 +66,10 @@ class PolymarketAccountService
     /**
      * @param  array{
      *     name:string,
-     *     wallet_address?:?string,
+     *     wallet_address:string,
      *     funder_address?:?string,
      *     signature_type:int,
-     *     env_key_name?:?string,
-     *     vault_key_ref?:?string,
+     *     env_key_name:string,
      *     is_active?:bool,
      *     priority?:?int,
      *     risk_profile?:?string,
@@ -77,13 +80,19 @@ class PolymarketAccountService
      */
     public function update(PolymarketAccount $account, array $payload): PolymarketAccount
     {
+        $walletAddress = trim((string) ($payload['wallet_address'] ?? ''));
+        $funderAddress = $this->normalizeFunderAddress(
+            $payload['funder_address'] ?? null,
+            $payload['signature_type'],
+            $walletAddress
+        );
+
         $account->update([
             'name' => trim($payload['name']),
-            'wallet_address' => $payload['wallet_address'] ?? null,
-            'funder_address' => $payload['funder_address'] ?? null,
+            'wallet_address' => $walletAddress,
+            'funder_address' => $funderAddress,
             'signature_type' => $payload['signature_type'],
-            'env_key_name' => $payload['env_key_name'] ?? null,
-            'vault_key_ref' => $payload['vault_key_ref'] ?? null,
+            'env_key_name' => trim((string) ($payload['env_key_name'] ?? '')),
             'is_active' => $payload['is_active'] ?? $account->is_active,
             'priority' => $payload['priority'] ?? $account->priority,
             'risk_profile' => $payload['risk_profile'] ?? $account->risk_profile,
@@ -164,5 +173,20 @@ class PolymarketAccountService
             'error_rate' => round($errorRate + ($runtimeErrors > 0 ? 0.1 : 0.0), 2),
             'throughput' => $throughput,
         ];
+    }
+
+    private function normalizeFunderAddress(?string $funderAddress, int $signatureType, string $walletAddress): ?string
+    {
+        $normalizedFunderAddress = $funderAddress === null ? null : trim($funderAddress);
+
+        if ($normalizedFunderAddress !== null && $normalizedFunderAddress !== '') {
+            return $normalizedFunderAddress;
+        }
+
+        if ($signatureType === 0 && $walletAddress !== '') {
+            return $walletAddress;
+        }
+
+        return null;
     }
 }

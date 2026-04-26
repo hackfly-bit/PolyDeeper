@@ -1,7 +1,25 @@
-<div x-data="{ refreshing: false }" x-on:livewire-refresh.window="refreshing = true; $wire.refresh().then(() => refreshing = false)" class="space-y-4">
+<div
+    x-data="{ refreshing: false }"
+    x-on:dashboard-refresh.window="refreshing = true; Livewire.find('{{ $this->getId() }}').call('refresh').then(() => refreshing = false)"
+    wire:poll.5s="refresh"
+    class="space-y-4"
+>
     <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Runtime Monitor</h2>
-        <span x-show="refreshing" x-cloak class="text-xs text-blue-500">⟳</span>
+        <div>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Runtime Monitor</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Health check sistem aktif dan refresh otomatis tiap 5 detik</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <span x-show="refreshing" x-cloak class="text-xs text-blue-500">⟳</span>
+            <button
+                type="button"
+                wire:click="refresh"
+                wire:loading.attr="disabled"
+                class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-border dark:bg-dark-surface dark:text-gray-200 dark:hover:border-brand-500/40 dark:hover:text-brand-300"
+            >
+                Reload
+            </button>
+        </div>
     </div>
 
     <div class="grid grid-cols-2 gap-3">

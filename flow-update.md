@@ -1,311 +1,384 @@
-﻿# Flow Update - Polymarket Bot (Laravel 12)
+﻿# Flow Update Polymarket Authentication
 
-## Objective
-Merapikan flow sistem Polymarket bot agar secure, scalable, dan production-ready dengan ketentuan:
-- L1 auth untuk wallet signing (private key tetap di backend/env/vault)
-- L2 auth untuk API key (`apiKey`, `secret`, `passphrase`) terenkripsi di database
-- Clean service architecture (MVC + Service Layer, tanpa repository pattern)
+## Tujuan
 
----
+Merapikan flow autentikasi Polymarket agar sesuai dengan dokumentasi resmi:
 
-## Kondisi Saat Ini (Ringkas)
-- L2 header signing sudah berjalan di `PolymarketAuthService`.
-- Eksekusi order masih terlalu gemuk di `TradeExecutorService` (resolve market, build payload, submit API dalam satu tempat).
-- Credential masih menggunakan `SystemSetting` dan sebelumnya sempat membuka jalur penyimpanan private key di DB.
-- Halaman settings sudah mulai ada, tapi belum final untuk model multi-wallet account yang production-ready.
+1. User hanya mengisi data dasar account.
+2. L2 credential (`apiKey`, `secret`, `passphrase`) tidak diinput manual.
+3. Tombol `Validate` menjalankan flow L1 untuk `create or derive API key`, lalu langsung menyimpan hasilnya ke tabel `polymarket_accounts`.
+4. Runtime trading hanya memakai account aktif dari tabel `polymarket_accounts`, tanpa fallback global yang membingungkan.
 
----
+Referensi doc Polymarket yang harus dijadikan acuan:
 
-## Target Security Model (Wajib)
+- `Authentication`: L1 memakai private key untuk membuat/derive API credential, L2 memakai `apiKey + secret + passphrase`.
+- `L1 Methods`: `createApiKey`, `deriveApiKey`, `createOrDeriveApiKey`.
+- `Trading Overview` / `Quickstart`: flow awal yang direkomendasikan adalah `private key -> derive/create L2 credential -> pakai L2 untuk trade`.
 
-### 1) Private Key (L1)
-- Tidak disimpan di DB.
-- Tidak dikirim ke frontend.
-- Hanya di backend melalui:
-  - `.env` khusus server, atau
-  - secret manager/vault.
-- Sistem hanya menyimpan referensi alias key (`env_key_name` / `vault_key_ref`).
+## Ringkasan Audit
 
-### 2) API Credential (L2)
-- `api_key`, `api_secret`, `api_passphrase` disimpan di DB dalam kondisi terenkripsi (`Crypt::encryptString`).
-- Hanya didecrypt saat runtime di backend service.
-- Tidak ditampilkan penuh di UI (mask + status saja).
+### Yang sudah benar
 
-### 3) Signing
-- Semua signing dilakukan di backend:
-  - L1 signing untuk setup/generate API key.
-  - L2 HMAC SHA256 untuk request API.
-  - EIP-712 signing untuk order.
+- Sudah ada pemisahan model account ke tabel `polymarket_accounts`.
+- L2 credential sudah disimpan per-account di DB, bukan dipaksa lewat `.env`.
+- Sudah ada action `validate`, `revoke`, `disable trading`, `enable trading`.
+- Sudah ada orchestrator untuk memilih account aktif.
 
----
+### Yang belum sesuai doc Polymarket
 
-## Struktur Sistem Target
+1. Flow UI masih meminta input L2 manual.
+   - `resources/views/dashboard/polymarket-accounts/show.blade.php` masih punya form `API Key`, `API Secret`, `API Passphrase`.
+   - Ini bertentangan dengan flow doc Polymarket yang menempatkan L2 credential sebagai hasil dari L1 auth, bukan input manual user.
 
-### Controller
-- `PolymarketAccountController`
-  - create/update account profile
-  - validate credential
-  - rotate/revoke credential
-- `BotExecutionController` (atau dashboard action controller)
-  - start/stop bot
-  - manual trigger sync/execution
+2. Method `validate` belum melakukan bootstrap L1 -> L2.
+   - `app/Services/Polymarket/PolymarketCredentialService.php` saat ini melempar error jika `api_key/api_secret/api_passphrase` belum ada.
+   - Seharusnya `validate` justru:
+     - resolve private key signer,
+     - sign request L1,
+     - panggil endpoint create/derive API credential,
+     - simpan hasil ke DB,
+     - baru validasi endpoint L2.
 
-### Service
-- `PolymarketService`
-  - wrapper API call (Gamma/CLOB/Data)
-  - retry-aware + rate-limit aware transport
-- `SigningService`
-  - L1 signature
-  - L2 HMAC signature
-  - EIP-712 order signature
-- `PolymarketCredentialService`
-  - load/decrypt/rotate L2 credentials
-- `PolymarketAccountService`
-  - setup account lifecycle
-  - validation/revocation flow
-- `OrderExecutionService`
-  - compose payload, sign order, submit, persist result
+3. Masih ada flow global credentials di `SystemSetting`.
+   - `DashboardController::settings()` dan `DashboardController::updatePolymarketSettings()` masih membaca/menulis:
+     - `polymarket.address`
+     - `polymarket.funder`
+     - `polymarket.api_key`
+     - `polymarket.api_secret`
+     - `polymarket.api_passphrase`
+     - `polymarket.signature_type`
+   - Ini membuat runtime bisa ambigu karena sebagian code memakai account aktif, sebagian lagi fallback ke global setting.
 
-### Model
-- `PolymarketAccount` (baru)
+4. Implementasi L1 signing belum sesuai requirement doc.
+   - Doc Polymarket menyebut L1 harus memakai EIP-712 signature.
+   - `app/Services/Polymarket/SigningService.php` saat ini memakai `hash_hmac('sha256', ...)` untuk `signL1Message()` dan `signEip712Payload()`.
+   - Itu bukan ECDSA secp256k1 / EIP-712 signature yang valid untuk Polymarket.
+   - Ini blocker utama untuk flow auth yang benar.
+
+5. `PolymarketAuthService` baru lengkap untuk L2, belum lengkap untuk L1 onboarding.
+   - Sudah ada `buildL1Headers()`, tetapi belum ada flow lengkap:
+     - build typed data L1,
+     - sign EIP-712,
+     - call `POST /auth/api-key`,
+     - fallback `GET /auth/derive-api-key`,
+     - atau helper `createOrDeriveApiKey()`.
+
+6. Ada fungsi/route/command lama yang akan menjadi tidak relevan jika flow baru diterapkan.
+   - `PolymarketAccountController::storeCredentials()`
+   - route `settings.polymarket.accounts.credentials.store`
+   - form manual L2 credential di halaman detail account
+   - `DashboardController::updatePolymarketSettings()`
+   - route `settings.polymarket.update`
+   - `PolymarketConfigService` jika runtime sudah full per-account
+   - command `polymarket:set-credentials`
+
+## Flow Target Yang Benar
+
+### Flow user
+
+1. User buat account baru.
+2. User hanya isi field dasar:
+   - `name`
+   - `wallet_address`
+   - `signature_type`
+   - `funder_address` bila diperlukan untuk proxy/safe
+   - sumber private key signer
+3. User klik `Validate`.
+4. Backend:
+   - resolve private key signer,
+   - buat signature L1 sesuai doc,
+   - panggil `derive` atau `create` API credential,
+   - simpan `api_key`, `api_secret`, `api_passphrase` ke `polymarket_accounts`,
+   - hit endpoint L2 sederhana untuk memastikan credential valid,
+   - update `credential_status`, `last_validated_at`, `last_error_code`.
+5. Setelah itu account bisa dipilih sebagai account aktif dan dipakai runtime trading.
+
+### Catatan UX soal "private key"
+
+Agar tetap aman, private key sebaiknya **tidak disimpan plaintext di DB aplikasi**.
+
+Pilihan yang paling aman:
+
+- user hanya mengisi `wallet_address` + `env_key_name` / `secret reference`
+- backend membaca private key dari env / vault
+
+Kalau mau benar-benar menerima private key dari form UI, maka itu harus dianggap scope terpisah karena akan butuh:
+
+- penyimpanan terenkripsi khusus,
+- rotasi,
+- masking,
+- audit,
+- aturan akses yang jauh lebih ketat
+
+Untuk plan ini, opsi yang paling konsisten dengan codebase saat ini adalah:
+
+- input minimal user = `wallet_address` + referensi private key backend
+- bukan input manual L2 credential
+
+## Perubahan Yang Harus Dilakukan
+
+### 1. Sederhanakan model input account
+
+File terdampak:
+
+- `app/Http/Controllers/PolymarketAccountController.php`
+- `app/Services/Polymarket/PolymarketAccountService.php`
+- `resources/views/dashboard/polymarket-accounts/index.blade.php`
+- `resources/views/dashboard/polymarket-accounts/show.blade.php`
+
+Perubahan:
+
+- Jadikan field create/edit fokus ke data inti auth:
+  - `name`
   - `wallet_address`
-  - `funder_address`
   - `signature_type`
-  - `env_key_name` / `vault_key_ref`
-  - `api_key` (encrypted)
-  - `api_secret` (encrypted)
-  - `api_passphrase` (encrypted)
-  - `credential_status`
-  - `last_validated_at`
-  - `last_error_code`
+  - `funder_address`
+  - `env_key_name` atau secret ref yang jelas namanya
+- Pindahkan field runtime/risk (`priority`, `risk_profile`, `max_exposure_usd`, `max_order_size`, `cooldown_seconds`) ke section terpisah jika memang masih dibutuhkan untuk execution.
+- Hapus form manual input:
+  - `api_key`
+  - `api_secret`
+  - `api_passphrase`
 
-### Job / Queue
-- `GeneratePolymarketApiKeyJob`
-- `ExecuteTradeJob`
-- `SyncOpenOrdersJob`
-- `RefreshPolymarketCredentialJob`
-- `HandlePolymarketRateLimitJob`
+### 2. Ubah `validate` menjadi flow onboarding resmi
 
----
+File terdampak:
 
-## Flow Diagram (ASCII)
+- `app/Services/Polymarket/PolymarketCredentialService.php`
+- `app/Services/Polymarket/PolymarketAuthService.php`
+- `app/Services/Polymarket/PolymarketService.php`
 
-```text
-[Frontend Admin / Scheduler / Bot Engine]
-                 |
-                 v
-      [Controller / Job Dispatcher]
-                 |
-                 v
-       [PolymarketAccountService]
-                 |
-      +----------+-----------+
-      |                      |
-      v                      v
-[PolymarketAccount DB]   [Secret Resolver]
-(L2 encrypted)           (.env / Vault)
-      |                      |
-      +----------+-----------+
-                 v
-           [SigningService]
-      (L1 sign, L2 HMAC, EIP-712)
-                 |
-                 v
-          [PolymarketService]
-                 |
-                 v
-           [Polymarket API]
-                 |
-                 v
-        [Orders / Logs / Metrics]
-```
+Perubahan:
 
----
+- Tambahkan method baru dengan bentuk kira-kira:
+  - `createOrDeriveCredentials(PolymarketAccount $account): array`
+  - `createApiCredentialsViaL1(PolymarketAccount $account): array`
+  - `deriveApiCredentialsViaL1(PolymarketAccount $account): array`
+- Ubah `validateCredentials()` menjadi:
+  1. resolve signer private key
+  2. create/derive L2 credential via L1
+  3. simpan hasil ke account
+  4. validasi endpoint L2
+  5. update status account
 
-## Flow Step-by-Step
+Urutan yang direkomendasikan:
 
-### A. Setup Awal
-1. Admin membuat `PolymarketAccount` (wallet, funder, signature type, env key alias).
-2. Backend resolve private key dari env/vault berdasarkan alias.
-3. `SigningService` menghasilkan L1 signature.
-4. `PolymarketService` melakukan generate API credential.
-5. Backend menyimpan `apiKey`, `secret`, `passphrase` ke DB (encrypted).
-6. Sistem validasi credential baru ke endpoint CLOB.
-7. Status account menjadi `active` jika valid.
+1. Coba `derive` dulu untuk nonce default.
+2. Jika belum ada credential, baru `create`.
+3. Jika `create` sukses, simpan hasilnya.
+4. Lanjut hit endpoint L2 seperti `GET /data/orders`.
 
-### B. Runtime Bot
-1. Job memilih account `active`.
-2. `PolymarketCredentialService` decrypt credential L2.
-3. Ambil server timestamp Polymarket.
-4. `SigningService` generate HMAC signature (`timestamp + method + path + body`).
-5. Request dikirim dengan header L2.
-6. Response dicatat ke orders/logs/metrics.
+Alasan:
 
-### C. Order Execution
-1. Signal engine menghasilkan order intent.
-2. `OrderExecutionService` build order payload canonical.
-3. Resolve private key dari env/vault.
-4. `SigningService` sign EIP-712 order payload.
-5. Submit order ke Polymarket API.
-6. Persist status (`submitted/failed/filled/cancelled`) + raw metadata aman.
+- sesuai konsep `createOrDeriveApiKey()` yang direkomendasikan Polymarket,
+- aman untuk retry,
+- menghindari rotasi yang tidak perlu.
 
----
+### 3. Implementasikan signing L1 yang benar
 
-## Frontend Update Plan (Wajib Sinkron)
+File terdampak:
 
-### Halaman yang perlu ada
-- `Settings > Polymarket Accounts`
-- `Accounts List` (multi-wallet)
-- `Account Detail` (status credential, health, last validation)
+- `app/Services/Polymarket/SigningService.php`
+- kemungkinan service/helper baru untuk EIP-712 signing
 
-### Aksi frontend
-- Create account profile (`wallet_address`, `funder_address`, `signature_type`, `env_key_name`).
-- Trigger "Generate/Rotate L2 Credential".
-- Trigger "Validate Credential".
-- Trigger "Revoke Credential".
-- Toggle "Disable Trading" (kill switch).
+Perubahan wajib:
 
-### Aturan tampilan data sensitif
-- Jangan tampilkan private key.
-- Jangan tampilkan full secret/passphrase.
-- Tampilkan status saja: `tersimpan`, `belum ada`, `error`, `revoked`.
-- Mask `api_key` (contoh: `pk_****ABCD`).
+- Ganti implementasi pseudo-signing berbasis HMAC menjadi ECDSA secp256k1 yang benar.
+- L1 auth Polymarket harus menghasilkan signature EIP-712 yang valid.
+- Order signing juga harus diaudit ulang karena saat ini `signEip712Payload()` belum terlihat sesuai mekanisme EIP-712 sesungguhnya.
 
-### UX Status Badge
-- `Active` (hijau)
-- `Needs Rotation` (kuning)
-- `Revoked` (merah)
-- `Validation Failed` (merah)
+Status:
 
----
+- Ini adalah blocker teknis paling penting.
+- Tanpa ini, flow auth yang terlihat "berhasil" tetap berpotensi gagal saat melawan endpoint Polymarket yang asli.
 
-## Edge Cases & Risk Handling
+### 4. Hapus flow global `SystemSetting` untuk auth trading
 
-### Invalid Signature
-- Tandai event `auth_failed`.
-- Simpan metadata request (tanpa secret).
-- Retry hanya untuk kasus canonicalization bug/transient issue.
+File terdampak:
 
-### Timestamp Mismatch
-- Selalu pakai server time endpoint.
-- Terapkan drift tolerance dan fallback policy.
-- Raise alert jika mismatch berulang.
+- `app/Http/Controllers/DashboardController.php`
+- `app/Services/Polymarket/PolymarketConfigService.php`
+- `resources/views/dashboard/settings.blade.php`
+- `tests/Feature/SettingsPolymarketTest.php`
+- `tests/Feature/Unit/PolymarketConfigServiceTest.php`
+- `app/Console/Commands/PolymarketSetCredentialsCommand.php`
 
-### API Key Revoked
-- Deteksi dari 401/403 berulang.
-- Set `credential_status = revoked`.
-- Stop semua execution job untuk account tersebut.
+Perubahan:
 
-### Rate Limit
-- Centralized retry policy + exponential backoff.
-- Pisahkan throughput antara market-data dan trading endpoint.
-- Tambahkan queue throttling per account.
+- Hentikan penyimpanan auth trading ke `system_settings`.
+- Halaman `settings` cukup menampilkan:
+  - account aktif,
+  - status credential,
+  - signer/funder,
+  - ringkasan runtime,
+  - link ke manajemen account
+- Hapus form global credential update.
+- Hapus fallback runtime dari global config ke account config.
 
-### Wallet Compromise
-- Kill switch account (disable trading instan).
-- Revoke credential dan rotate alias key.
-- Audit seluruh order setelah timestamp kompromi.
+Target akhir:
 
----
+- satu-satunya sumber auth trading = `polymarket_accounts`
+- `system_settings` tidak lagi menyimpan credential trading Polymarket
 
-## Pseudocode Laravel
+### 5. Rapikan controller, route, dan action yang tidak perlu
 
-```php
-final class PolymarketAccountService
-{
-    public function setupAccount(PolymarketAccount $account): void
-    {
-        $privateKey = $this->secretResolver->resolve($account->env_key_name);
+File terdampak:
 
-        $l1Payload = $this->signingService->buildL1AuthPayload(
-            address: $account->wallet_address,
-            privateKey: $privateKey,
-        );
+- `app/Http/Controllers/PolymarketAccountController.php`
+- `routes/web.php`
 
-        $credential = $this->polymarketService->generateApiCredential($l1Payload);
+Hapus:
 
-        $account->update([
-            'api_key' => Crypt::encryptString($credential['apiKey']),
-            'api_secret' => Crypt::encryptString($credential['secret']),
-            'api_passphrase' => Crypt::encryptString($credential['passphrase']),
-            'credential_status' => 'active',
-            'last_validated_at' => now(),
-        ]);
-    }
-}
-```
+- `storeCredentials()`
+- route `settings.polymarket.accounts.credentials.store`
+- `DashboardController::updatePolymarketSettings()`
+- route `settings.polymarket.update`
 
-```php
-final class OrderExecutionService
-{
-    public function execute(PolymarketAccount $account, array $intent): array
-    {
-        $privateKey = $this->secretResolver->resolve($account->env_key_name);
-        $credential = $this->credentialService->forAccount($account);
+Pertahankan:
 
-        $orderPayload = $this->polymarketService->buildOrderPayload($intent, $account);
+- `store`
+- `update`
+- `validate`
+- `revoke`
+- `disableTrading`
+- `enableTrading`
+- `health`
+- `selectPolymarketAccount`
 
-        $signedOrder = $this->signingService->signEip712Order(
-            payload: $orderPayload,
-            privateKey: $privateKey,
-        );
+Opsional evaluasi:
 
-        return $this->polymarketService->submitOrder(
-            account: $account,
-            credential: $credential,
-            signedOrder: $signedOrder,
-        );
-    }
-}
-```
+- `rotateCredentials()` bisa dipertahankan jika memang mau ada status administratif `needs_rotation`.
+- Tetapi jika flow akhir hanya `validate => derive/create => active`, maka `rotate` bukan kebutuhan utama onboarding.
 
-```php
-final class SigningService
-{
-    public function signL2Request(string $secret, string $timestamp, string $method, string $path, string $body): string
-    {
-        $decodedSecret = base64_decode($secret, true);
+### 6. Rapikan schema / field DB yang tidak dipakai untuk auth
 
-        if ($decodedSecret === false) {
-            throw new RuntimeException('API secret tidak valid (base64).');
-        }
+Field yang **tetap dibutuhkan** untuk flow auth:
 
-        $signature = hash_hmac('sha256', $timestamp.$method.$path.$body, $decodedSecret, true);
+- `name`
+- `wallet_address`
+- `funder_address`
+- `signature_type`
+- `env_key_name` atau field pengganti yang lebih jelas
+- `api_key`
+- `api_secret`
+- `api_passphrase`
+- `credential_status`
+- `last_error_code`
+- `last_validated_at`
+- `last_rotated_at` opsional
+- `is_active`
 
-        return base64_encode($signature);
-    }
-}
-```
+Field yang **bukan bagian auth onboarding** dan perlu dipisahkan secara mental:
 
----
+- `priority`
+- `risk_profile`
+- `max_exposure_usd`
+- `max_order_size`
+- `cooldown_seconds`
+- `cooldown_until`
+- `auth_failure_count`
+- `rate_limit_hit_count`
 
-## Roadmap Eksekusi (Prioritas)
+Rekomendasi:
 
-### P0 - Security Critical
-- Hapus total jalur simpan `private_key` dari DB/UI/command.
-- Tambah `SecretResolverService` (env/vault based).
-- Batasi frontend agar hanya menampilkan status secret.
+- jangan hapus field runtime tersebut kalau memang dipakai execution,
+- tetapi pisahkan dari flow auth supaya user tidak merasa semua field itu wajib diisi untuk onboarding.
 
-### P1 - Core Architecture
-- Tambah model+tabel `polymarket_accounts`.
-- Split service: `SigningService`, `PolymarketService`, `OrderExecutionService`, `PolymarketCredentialService`.
-- Introduce account-based runtime (bukan global setting).
+Field yang perlu dievaluasi untuk dihapus/rename:
 
-### P2 - Reliability
-- Queue throttling, backoff, idempotency key.
-- Health endpoint + alerting for auth/rate-limit failures.
-- Audit log untuk rotate/revoke/validate.
+- `vault_key_ref`
+  - saat ini belum benar-benar di-resolve oleh `SecretResolverService`
+  - jika tidak dipakai, hapus
+  - jika mau dipakai, implementasikan resolver nyata
 
-### P3 - Scalability
-- Multi-wallet scheduler policy.
-- Account-level risk profile.
-- Metrics dashboard per account.
+## Urutan Implementasi
 
----
+### Phase 1 - Audit dan pemutusan flow lama
 
-## Definition of Done
-- Private key tidak pernah tersimpan di DB dan tidak pernah tampil di frontend.
-- L2 credential terenkripsi di DB, bisa rotate, validate, revoke.
-- Order flow menggunakan EIP-712 signing terpusat di backend service.
-- Frontend settings mendukung multi-account dan status credential health.
-- Job runtime memiliki retry/backoff/idempotency serta logging yang bisa diaudit.
+1. Hapus form global credential dari `settings`.
+2. Hapus route/controller global update credentials.
+3. Hapus form manual L2 credential dari detail account.
+4. Pastikan semua tampilan hanya membaca data dari account aktif.
+
+### Phase 2 - Auth onboarding yang benar
+
+1. Implementasikan L1 typed-data signing sesuai doc.
+2. Tambahkan service untuk `derive/create API credential`.
+3. Ubah tombol `Validate` menjadi:
+   - bootstrap L1 -> L2
+   - validasi L2
+   - simpan hasil ke DB
+
+### Phase 3 - Runtime cleanup
+
+1. Pastikan `PolymarketService` dan `OrderExecutionService` hanya memakai account aktif.
+2. Kurangi dependency ke `PolymarketConfigService`.
+3. Hapus command/fungsi/tes lama yang bergantung ke `system_settings`.
+
+### Phase 4 - Test coverage
+
+Tambahkan/update test untuk skenario berikut:
+
+1. Create account hanya dengan data dasar.
+2. Validate account tanpa L2 credential existing.
+3. Validate memanggil flow derive/create L1 dan menyimpan hasil ke DB.
+4. Validate gagal jika private key backend tidak tersedia.
+5. Re-validate account existing tidak meminta user input ulang L2 credential.
+6. Runtime settings page tidak lagi menampilkan form credential global.
+
+## Dampak ke File Saat Implementasi
+
+### Wajib diubah
+
+- `app/Http/Controllers/PolymarketAccountController.php`
+- `app/Http/Controllers/DashboardController.php`
+- `app/Services/Polymarket/PolymarketCredentialService.php`
+- `app/Services/Polymarket/PolymarketAuthService.php`
+- `app/Services/Polymarket/SigningService.php`
+- `resources/views/dashboard/settings.blade.php`
+- `resources/views/dashboard/polymarket-accounts/index.blade.php`
+- `resources/views/dashboard/polymarket-accounts/show.blade.php`
+- `routes/web.php`
+- `tests/Feature/PolymarketAccountControllerTest.php`
+- `tests/Feature/SettingsPolymarketTest.php`
+
+### Sangat mungkin dihapus
+
+- `app/Console/Commands/PolymarketSetCredentialsCommand.php`
+- `app/Services/Polymarket/PolymarketConfigService.php`
+- test yang hanya memverifikasi global setting credentials
+
+### Perlu dipastikan sebelum dihapus
+
+- semua pemakaian `PolymarketConfigService` di runtime/order execution
+- semua referensi `system_settings` key `polymarket.*`
+- apakah `vault_key_ref` benar-benar dipakai atau hanya placeholder
+
+## Definisi Selesai
+
+Flow dianggap selesai bila kondisi berikut terpenuhi:
+
+1. User tidak pernah lagi diminta mengisi `api_key`, `api_secret`, `api_passphrase`.
+2. User cukup mengisi data dasar account dan sumber signer private key.
+3. Tombol `Validate` menghasilkan atau me-derive L2 credential dari L1 auth.
+4. Hasil credential langsung tersimpan ke `polymarket_accounts`.
+5. Runtime trading hanya memakai account aktif dari DB account.
+6. Tidak ada lagi fallback auth trading dari `system_settings`.
+7. Signing L1 dan order signing sudah sesuai format signature Polymarket yang valid.
+
+## Catatan Risiko
+
+Risiko terbesar bukan di UI, tetapi di crypto signing:
+
+- jika implementasi signature masih pseudo-signing, maka auth dan order flow akan tetap salah walaupun UX sudah rapi
+- karena itu, pembenahan `SigningService` harus diperlakukan sebagai prioritas tertinggi
+
+## Kesimpulan
+
+Arah plan yang benar adalah:
+
+- pertahankan `polymarket_accounts` sebagai source of truth,
+- hapus flow global credential di `settings`,
+- hilangkan input manual L2 credential,
+- ubah `Validate` menjadi flow resmi `L1 -> create/derive L2 -> save -> verify`,
+- audit dan perbaiki implementasi signing agar benar-benar sesuai doc Polymarket.

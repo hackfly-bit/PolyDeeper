@@ -8,7 +8,6 @@ use App\Models\PolymarketAccount;
 use App\Services\Polymarket\PolymarketAccountAuditService;
 use App\Services\Polymarket\PolymarketAccountOrchestratorService;
 use App\Services\Polymarket\PolymarketAuthService;
-use App\Services\Polymarket\PolymarketConfigService;
 use App\Services\Polymarket\PolymarketService;
 use App\Services\Polymarket\SigningService;
 use Illuminate\Http\Client\ConnectionException;
@@ -21,7 +20,6 @@ class OrderExecutionService
 {
     public function __construct(
         public PolymarketService $polymarketService,
-        public PolymarketConfigService $configService,
         public PolymarketAccountOrchestratorService $accountOrchestratorService,
         public PolymarketAccountAuditService $auditService,
         public PolymarketAuthService $authService,
@@ -104,7 +102,7 @@ class OrderExecutionService
             'price' => $price,
             'size' => $size,
             'order_type' => $context['order_type'] ?? 'GTC',
-            'signature_type' => $account->signature_type ?? $this->configService->signatureType(),
+            'signature_type' => $account->signature_type,
             'owner' => $account->wallet_address,
         ];
         $typedData = $this->buildOrderTypedData($orderPayload, $conditionId, $account);
@@ -153,7 +151,7 @@ class OrderExecutionService
             'status' => 'submitting',
             'idempotency_key' => $idempotencyKey,
             'signature_type' => $orderPayload['signature_type'],
-            'funder_address' => $account->funder_address ?? $this->configService->funderAddress(),
+            'funder_address' => $account->funder_address,
             'raw_request' => $orderPayload,
         ]);
 

@@ -14,7 +14,7 @@
     <div class="flex items-center justify-between">
         <div>
             <h2 class="text-lg font-bold text-gray-900 dark:text-white">Account Detail: {{ $account->name }}</h2>
-            <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Status credential dan aksi operasional account.</p>
+            <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Private key tetap di backend. Tombol validate akan melakukan autentikasi L1 lalu membuat atau me-derive credential L2 dan menyimpannya ke database.</p>
         </div>
         <a href="{{ route('settings.polymarket.accounts.index') }}" class="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">Kembali</a>
     </div>
@@ -53,11 +53,11 @@
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Wallet Address</label>
-                <input name="wallet_address" type="text" value="{{ old('wallet_address', $account->wallet_address) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <input name="wallet_address" type="text" value="{{ old('wallet_address', $account->wallet_address) }}" required class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Funder Address</label>
-                <input name="funder_address" type="text" value="{{ old('funder_address', $account->funder_address) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <input name="funder_address" type="text" value="{{ old('funder_address', $account->funder_address) }}" placeholder="Opsional, auto wallet untuk signature type 0" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Signature Type</label>
@@ -69,11 +69,7 @@
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Env Key Name</label>
-                <input name="env_key_name" type="text" value="{{ old('env_key_name', $account->env_key_name) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Vault Key Ref</label>
-                <input name="vault_key_ref" type="text" value="{{ old('vault_key_ref', $account->vault_key_ref) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <input name="env_key_name" type="text" value="{{ old('env_key_name', $account->env_key_name) }}" required class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Priority</label>
@@ -138,29 +134,14 @@
             </div>
         </div>
 
-        <form method="POST" action="{{ route('settings.polymarket.accounts.credentials.store', $account) }}" class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            @csrf
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">API Key</label>
-                <input name="api_key" type="text" required class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">API Secret</label>
-                <input name="api_secret" type="password" required class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div>
-                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">API Passphrase</label>
-                <input name="api_passphrase" type="password" required class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
-            </div>
-            <div class="md:col-span-3 flex justify-end">
-                <button type="submit" class="btn-primary text-sm px-4 py-2">Generate/Rotate L2 Credential</button>
-            </div>
-        </form>
+        <div class="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-900/30 dark:bg-blue-900/20 dark:text-blue-300">
+            Input manual API key, secret, dan passphrase sudah dihapus. Credential L2 dikelola otomatis dari hasil autentikasi L1 saat validate.
+        </div>
 
         <div class="mt-5 flex flex-wrap gap-2">
             <form method="POST" action="{{ route('settings.polymarket.accounts.validate', $account) }}">
                 @csrf
-                <button type="submit" class="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">Validate Credential</button>
+                <button type="submit" class="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">Validate Dan Sync Credential</button>
             </form>
             <form method="POST" action="{{ route('settings.polymarket.accounts.rotate', $account) }}">
                 @csrf

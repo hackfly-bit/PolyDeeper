@@ -20,7 +20,6 @@ class PolymarketAccount extends Model
         'funder_address',
         'signature_type',
         'env_key_name',
-        'vault_key_ref',
         'api_key',
         'api_secret',
         'api_passphrase',

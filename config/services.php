@@ -48,6 +48,8 @@ return [
         'api_secret' => env('POLYMARKET_API_SECRET'),
         'api_passphrase' => env('POLYMARKET_API_PASSPHRASE'),
         'timeout_seconds' => (int) env('POLYMARKET_TIMEOUT_SECONDS', 15),
+        'tls_verify' => filter_var(env('POLYMARKET_TLS_VERIFY', true), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
+        'ca_bundle' => env('POLYMARKET_CA_BUNDLE'),
     ],
 
 ];

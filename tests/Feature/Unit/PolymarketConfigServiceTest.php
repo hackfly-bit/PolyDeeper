@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Unit;
 
-use App\Models\SystemSetting;
-use App\Services\Polymarket\PolymarketConfigService;
+use App\Models\PolymarketAccount;
+use App\Services\Polymarket\PolymarketAccountService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -11,65 +11,65 @@ class PolymarketConfigServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_it_prefers_database_values_for_dynamic_polymarket_settings(): void
+    public function test_it_uses_wallet_address_as_funder_for_eoa_accounts(): void
     {
-        config([
-            'services.polymarket.address' => '0xenv-address',
-            'services.polymarket.funder' => '0xenv-funder',
-            'services.polymarket.api_key' => 'env-api-key',
-            'services.polymarket.api_secret' => 'ZW52LXNlY3JldA==',
-            'services.polymarket.api_passphrase' => 'env-passphrase',
-            'services.polymarket.signature_type' => 0,
-        ]);
-
-        $service = app(PolymarketConfigService::class);
-        $service->storeTradingConfig([
-            'address' => '0xdb-address',
-            'funder' => '0xdb-funder',
-            'api_key' => 'db-api-key',
-            'api_secret' => 'ZGItc2VjcmV0',
-            'api_passphrase' => 'db-passphrase',
-            'signature_type' => 2,
-        ]);
-
-        $config = $service->tradingConfig();
-        $secretSetting = SystemSetting::query()->where('key', 'polymarket.api_secret')->firstOrFail();
-
-        $this->assertSame('0xdb-address', $config['address']);
-        $this->assertSame('0xdb-funder', $config['funder']);
-        $this->assertSame('db-api-key', $config['api_key']);
-        $this->assertSame('ZGItc2VjcmV0', $config['api_secret']);
-        $this->assertSame('db-passphrase', $config['api_passphrase']);
-        $this->assertSame(2, $config['signature_type']);
-        $this->assertTrue($secretSetting->is_encrypted);
-        $this->assertNotSame('ZGItc2VjcmV0', $secretSetting->value);
-    }
-
-    public function test_it_uses_funder_as_signer_for_eoa_when_address_is_missing(): void
-    {
-        $service = app(PolymarketConfigService::class);
-        $service->storeTradingConfig([
-            'funder' => '0xeoa-funder',
+        $account = app(PolymarketAccountService::class)->create([
+            'name' => 'EOA Trader',
+            'wallet_address' => '0xeoa-wallet',
+            'funder_address' => null,
             'signature_type' => 0,
+            'env_key_name' => 'POLY_SIGNER_EOA',
         ]);
 
-        $config = $service->tradingConfig();
-
-        $this->assertSame('0xeoa-funder', $config['address']);
+        $this->assertSame('0xeoa-wallet', $account->wallet_address);
+        $this->assertSame('0xeoa-wallet', $account->funder_address);
     }
 
-    public function test_it_does_not_use_env_fallback_for_sensitive_credentials(): void
+    public function test_it_keeps_funder_nullable_for_proxy_accounts_until_user_sets_it(): void
     {
-        config([
-            'services.polymarket.api_key' => 'env-api-key',
-            'services.polymarket.api_secret' => base64_encode('env-secret'),
-            'services.polymarket.api_passphrase' => 'env-passphrase',
+        $account = app(PolymarketAccountService::class)->create([
+            'name' => 'Proxy Trader',
+            'wallet_address' => '0xproxy-wallet',
+            'funder_address' => null,
+            'signature_type' => 2,
+            'env_key_name' => 'POLY_SIGNER_PROXY',
         ]);
 
-        $config = app(PolymarketConfigService::class)->tradingConfig();
+        $this->assertNull($account->funder_address);
+    }
 
-        $this->assertNull($config['api_key']);
-        $this->assertNull($config['api_secret']);
-        $this->assertNull($config['api_passphrase']);
+    public function test_it_updates_runtime_fields_on_existing_account(): void
+    {
+        $account = PolymarketAccount::factory()->create([
+            'name' => 'Alpha Trader',
+            'wallet_address' => '0xalpha',
+            'funder_address' => null,
+            'signature_type' => 0,
+            'env_key_name' => 'POLY_SIGNER_ALPHA',
+            'priority' => 100,
+            'risk_profile' => 'standard',
+            'cooldown_seconds' => 0,
+        ]);
+        $updated = app(PolymarketAccountService::class)->update($account, [
+            'name' => 'Alpha Trader v2',
+            'wallet_address' => '0xalpha-updated',
+            'funder_address' => null,
+            'signature_type' => 0,
+            'env_key_name' => 'POLY_SIGNER_ALPHA_V2',
+            'is_active' => true,
+            'priority' => 10,
+            'risk_profile' => 'aggressive',
+            'max_exposure_usd' => 2500.50,
+            'max_order_size' => 25.75,
+            'cooldown_seconds' => 30,
+        ]);
+
+        $this->assertSame('Alpha Trader v2', $updated->name);
+        $this->assertSame('0xalpha-updated', $updated->wallet_address);
+        $this->assertSame('0xalpha-updated', $updated->funder_address);
+        $this->assertSame('POLY_SIGNER_ALPHA_V2', $updated->env_key_name);
+        $this->assertSame(10, $updated->priority);
+        $this->assertSame('aggressive', $updated->risk_profile);
+        $this->assertSame(30, $updated->cooldown_seconds);
     }
 }

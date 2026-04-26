@@ -8,8 +8,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Wallet extends Model
 {
     protected $fillable = [
+        'name',
         'address',
         'weight',
+        'pnl',
         'win_rate',
         'roi',
         'last_active',
@@ -18,6 +20,7 @@ class Wallet extends Model
     protected $casts = [
         'last_active' => 'datetime',
         'weight' => 'float',
+        'pnl' => 'float',
         'win_rate' => 'float',
         'roi' => 'float',
     ];

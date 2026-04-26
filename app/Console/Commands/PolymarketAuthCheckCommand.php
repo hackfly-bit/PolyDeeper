@@ -2,21 +2,30 @@
 
 namespace App\Console\Commands;
 
-use App\Services\Polymarket\PolymarketAuthService;
+use App\Models\PolymarketAccount;
+use App\Services\Polymarket\PolymarketCredentialService;
 use Illuminate\Console\Command;
 
 class PolymarketAuthCheckCommand extends Command
 {
-    protected $signature = 'polymarket:auth-check';
+    protected $signature = 'polymarket:auth-check {account : ID account Polymarket yang akan divalidasi}';
 
-    protected $description = 'Validate Polymarket L2 API credentials';
+    protected $description = 'Validate account Polymarket dan bootstrap credential L2 bila belum tersedia';
 
     /**
      * Execute the console command.
      */
-    public function handle(PolymarketAuthService $authService): int
+    public function handle(PolymarketCredentialService $credentialService): int
     {
-        $result = $authService->validateL2Credentials();
+        $account = PolymarketAccount::query()->find($this->argument('account'));
+
+        if (! $account instanceof PolymarketAccount) {
+            $this->error('Account Polymarket tidak ditemukan.');
+
+            return self::FAILURE;
+        }
+
+        $result = $credentialService->validateCredentials($account);
 
         $this->line('Status: '.$result['status']);
         $this->line('Body: '.json_encode($result['body'], JSON_PRETTY_PRINT));

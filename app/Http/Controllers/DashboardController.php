@@ -9,16 +9,19 @@ use App\Models\Signal;
 use App\Models\Wallet;
 use App\Models\WalletTrade;
 use App\Services\Polymarket\PolymarketAccountOrchestratorService;
-use App\Services\Polymarket\PolymarketConfigService;
+use App\Services\Polymarket\PolymarketWalletStatsService;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Throwable;
 
 class DashboardController extends Controller
@@ -133,38 +136,98 @@ class DashboardController extends Controller
         ]);
     }
 
-    public function storeWallet(Request $request): RedirectResponse
+    public function storeWallet(
+        Request $request,
+        PolymarketWalletStatsService $polymarketWalletStatsService
+    ): RedirectResponse
     {
+        if ($request->filled('address')) {
+            $request->merge([
+                'address' => $polymarketWalletStatsService->normalizeAddress((string) $request->input('address')),
+            ]);
+        }
+
         $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
             'address' => ['required', 'string', 'max:255', 'unique:wallets,address'],
-            'weight' => ['required', 'numeric', 'min:0'],
-            'win_rate' => ['required', 'numeric', 'min:0', 'max:100'],
-            'roi' => ['required', 'numeric'],
-            'last_active' => ['nullable', 'date'],
         ]);
 
-        Wallet::query()->create($validated);
+        try {
+            Wallet::query()->create(
+                $polymarketWalletStatsService->payloadForWallet(
+                    $validated['name'],
+                    $validated['address'],
+                )
+            );
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('wallets')
+                ->withErrors(['wallet_sync' => $exception->getMessage()])
+                ->withInput();
+        }
 
         return redirect()
             ->route('wallets')
             ->with('wallet_success', 'Wallet berhasil ditambahkan.');
     }
 
-    public function updateWallet(Request $request, Wallet $wallet): RedirectResponse
+    public function updateWallet(
+        Request $request,
+        Wallet $wallet,
+        PolymarketWalletStatsService $polymarketWalletStatsService
+    ): RedirectResponse
     {
+        if ($request->filled('address')) {
+            $request->merge([
+                'address' => $polymarketWalletStatsService->normalizeAddress((string) $request->input('address')),
+            ]);
+        }
+
         $validated = $request->validate([
-            'address' => ['required', 'string', 'max:255', 'unique:wallets,address,'.$wallet->id],
-            'weight' => ['required', 'numeric', 'min:0'],
-            'win_rate' => ['required', 'numeric', 'min:0', 'max:100'],
-            'roi' => ['required', 'numeric'],
-            'last_active' => ['nullable', 'date'],
+            'name' => ['required', 'string', 'max:255'],
+            'address' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('wallets', 'address')->ignore($wallet->id),
+            ],
         ]);
 
-        $wallet->update($validated);
+        try {
+            $wallet->update(
+                $polymarketWalletStatsService->payloadForWallet(
+                    $validated['name'],
+                    $validated['address'],
+                )
+            );
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('wallets')
+                ->withErrors(['wallet_sync' => $exception->getMessage()])
+                ->withInput();
+        }
 
         return redirect()
             ->route('wallets')
             ->with('wallet_success', 'Wallet berhasil diperbarui.');
+    }
+
+    public function refreshWallet(
+        Wallet $wallet,
+        PolymarketWalletStatsService $polymarketWalletStatsService
+    ): RedirectResponse
+    {
+        try {
+            $polymarketWalletStatsService->syncWallet($wallet);
+        } catch (Throwable $exception) {
+            return redirect()
+                ->route('wallets')
+                ->withErrors(['wallet_sync' => $exception->getMessage()]);
+        }
+
+        return redirect()
+            ->route('wallets')
+            ->with('wallet_success', 'Wallet berhasil diperbarui dari Polymarket.');
     }
 
     public function destroyWallet(Wallet $wallet): RedirectResponse
@@ -177,11 +240,9 @@ class DashboardController extends Controller
     }
 
     public function settings(
-        PolymarketConfigService $configService,
         PolymarketAccountOrchestratorService $accountOrchestratorService
     ): View
     {
-        $polymarketConfig = $configService->tradingConfig();
         $selectedAccount = $accountOrchestratorService->pickActiveAccount();
 
         return view('dashboard.settings', [
@@ -192,16 +253,9 @@ class DashboardController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name', 'wallet_address', 'credential_status', 'is_active']),
             'selectedPolymarketAccount' => $selectedAccount,
-            'polymarketConfig' => [
-                'address' => $selectedAccount?->wallet_address ?? $polymarketConfig['address'],
-                'funder' => $selectedAccount?->funder_address ?? $polymarketConfig['funder'],
-                'signature_type' => $selectedAccount?->signature_type ?? $polymarketConfig['signature_type'],
-                'masked_api_key' => $this->maskApiKey($selectedAccount?->api_key ?? $polymarketConfig['api_key']),
-                'has_api_secret' => ($selectedAccount?->api_secret ?? $polymarketConfig['api_secret']) !== null,
-                'has_api_passphrase' => ($selectedAccount?->api_passphrase ?? $polymarketConfig['api_passphrase']) !== null,
-                'credential_status' => $selectedAccount?->credential_status ?? 'not_configured',
-                'account_name' => $selectedAccount?->name,
-            ],
+            'selectedPolymarketMaskedApiKey' => $this->maskApiKey($selectedAccount?->api_key),
+            'selectedPolymarketWalletAccounts' => $this->walletAccountsForAddress($selectedAccount?->wallet_address),
+            'polymarketServerStatuses' => $this->polymarketServerStatuses(),
         ]);
     }
 
@@ -221,43 +275,6 @@ class DashboardController extends Controller
             ->with('settings_success', 'Account Polymarket aktif berhasil dipilih.');
     }
 
-    public function updatePolymarketSettings(Request $request, PolymarketConfigService $configService): RedirectResponse
-    {
-        $validated = $request->validate([
-            'address' => ['nullable', 'string', 'max:255'],
-            'funder' => ['nullable', 'string', 'max:255'],
-            'signature_type' => ['required', 'integer', 'in:0,1,2'],
-            'api_key' => ['nullable', 'string', 'max:255'],
-            'api_secret' => ['nullable', 'string', 'max:255'],
-            'api_passphrase' => ['nullable', 'string', 'max:255'],
-            'clear_api_secret' => ['nullable', 'boolean'],
-            'clear_api_passphrase' => ['nullable', 'boolean'],
-        ]);
-
-        $payload = [
-            'address' => $validated['address'] ?? null,
-            'funder' => $validated['funder'] ?? null,
-            'signature_type' => $validated['signature_type'],
-            'api_key' => $validated['api_key'] ?? null,
-            'api_secret' => $validated['api_secret'] ?? null,
-            'api_passphrase' => $validated['api_passphrase'] ?? null,
-        ];
-
-        if ($request->boolean('clear_api_secret')) {
-            $payload['api_secret'] = '';
-        }
-
-        if ($request->boolean('clear_api_passphrase')) {
-            $payload['api_passphrase'] = '';
-        }
-
-        $configService->storeTradingConfig($payload);
-
-        return redirect()
-            ->route('settings')
-            ->with('settings_success', 'Konfigurasi kredensial Polymarket berhasil disimpan.');
-    }
-
     private function maskApiKey(?string $apiKey): ?string
     {
         if ($apiKey === null || trim($apiKey) === '') {
@@ -274,6 +291,155 @@ class DashboardController extends Controller
     }
 
     /**
+     * @return \Illuminate\Database\Eloquent\Collection<int, PolymarketAccount>
+     */
+    private function walletAccountsForAddress(?string $walletAddress)
+    {
+        $normalizedWalletAddress = trim((string) $walletAddress);
+
+        if ($normalizedWalletAddress === '') {
+            return PolymarketAccount::newCollection();
+        }
+
+        return PolymarketAccount::query()
+            ->whereRaw('LOWER(wallet_address) = ?', [strtolower($normalizedWalletAddress)])
+            ->orderByDesc('is_active')
+            ->orderByDesc('last_validated_at')
+            ->orderBy('priority')
+            ->orderBy('name')
+            ->get([
+                'id',
+                'name',
+                'wallet_address',
+                'credential_status',
+                'env_key_name',
+                'is_active',
+                'last_validated_at',
+                'last_error_code',
+            ]);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function polymarketServerStatuses(): array
+    {
+        return [
+            $this->probePolymarketServer(
+                'CLOB API',
+                (string) config('services.polymarket.clob_host', 'https://clob.polymarket.com'),
+                '/time'
+            ),
+            $this->probePolymarketServer(
+                'Gamma API',
+                (string) config('services.polymarket.gamma_host', 'https://gamma-api.polymarket.com'),
+                '/markets',
+                [
+                    'limit' => 1,
+                    'active' => 'true',
+                    'closed' => 'false',
+                ]
+            ),
+            $this->probePolymarketServer(
+                'Data API',
+                (string) config('services.polymarket.data_host', 'https://data-api.polymarket.com'),
+                '/'
+            ),
+        ];
+    }
+
+    /**
+     * @param  array<string, scalar>  $query
+     * @return array<string, mixed>
+     */
+    private function probePolymarketServer(string $name, string $host, string $path, array $query = []): array
+    {
+        $normalizedHost = rtrim(trim($host), '/');
+        $probe = $path;
+
+        if ($query !== []) {
+            $probe .= '?'.http_build_query($query);
+        }
+
+        if ($normalizedHost === '') {
+            return [
+                'name' => $name,
+                'host' => '-',
+                'probe' => $probe,
+                'state' => 'missing',
+                'label' => 'Belum dikonfigurasi',
+                'http_status' => null,
+                'message' => 'Host endpoint belum diisi pada konfigurasi.',
+            ];
+        }
+
+        try {
+            $response = Http::baseUrl($normalizedHost)
+                ->timeout((int) config('services.polymarket.timeout_seconds', 15))
+                ->acceptJson()
+                ->withOptions([
+                    // 'verify' => $this->polymarketTlsVerifyOption(),
+                    'verify' => false,
+                ])
+                ->get($path, $query);
+
+            $status = $response->status();
+
+            [$state, $label] = match (true) {
+                $response->successful() => ['healthy', 'Online'],
+                $status >= 500 => ['down', 'Server error'],
+                default => ['degraded', 'Respons tidak ideal'],
+            };
+
+            return [
+                'name' => $name,
+                'host' => $normalizedHost,
+                'probe' => $probe,
+                'state' => $state,
+                'label' => $label,
+                'http_status' => $status,
+                'message' => $response->successful()
+                    ? 'Endpoint merespons normal.'
+                    : 'Endpoint merespons HTTP '.$status.'.',
+            ];
+        } catch (ConnectionException $exception) {
+            return [
+                'name' => $name,
+                'host' => $normalizedHost,
+                'probe' => $probe,
+                'state' => 'down',
+                'label' => 'Tidak terhubung',
+                'http_status' => null,
+                'message' => Str::limit($exception->getMessage(), 160),
+            ];
+        } catch (Throwable $exception) {
+            return [
+                'name' => $name,
+                'host' => $normalizedHost,
+                'probe' => $probe,
+                'state' => 'degraded',
+                'label' => 'Gagal diproses',
+                'http_status' => null,
+                'message' => Str::limit($exception->getMessage(), 160),
+            ];
+        }
+    }
+
+    /**
+     * @return bool|string
+     */
+    private function polymarketTlsVerifyOption(): bool|string
+    {
+        $caBundle = trim((string) config('services.polymarket.ca_bundle', ''));
+
+        if ($caBundle !== '') {
+            return $caBundle;
+        }
+
+        return (bool) config('services.polymarket.tls_verify', true);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function runtimeStatus(): array
@@ -282,7 +448,7 @@ class DashboardController extends Controller
         $redisError = null;
 
         try {
-            $redisReachable = Redis::ping() === 'PONG';
+            $redisReachable = $this->isRedisPingSuccessful(Redis::ping());
         } catch (Throwable $exception) {
             $redisError = Str::limit($exception->getMessage(), 160);
         }
@@ -297,6 +463,25 @@ class DashboardController extends Controller
             'jobs_pending' => DB::table('jobs')->count(),
             'jobs_failed' => DB::table('failed_jobs')->count(),
         ];
+    }
+
+    private function isRedisPingSuccessful(mixed $response): bool
+    {
+        if ($response === true) {
+            return true;
+        }
+
+        if (is_object($response) && method_exists($response, 'getPayload')) {
+            /** @var mixed $payload */
+            $payload = $response->getPayload();
+            $response = $payload;
+        }
+
+        if (! is_scalar($response)) {
+            return false;
+        }
+
+        return strtoupper(ltrim((string) $response, '+')) === 'PONG';
     }
 
     /**

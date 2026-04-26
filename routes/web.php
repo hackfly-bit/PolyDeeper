@@ -10,15 +10,14 @@ Route::get('/signals', [DashboardController::class, 'signals'])->name('signals')
 Route::get('/wallets', [DashboardController::class, 'wallets'])->name('wallets');
 Route::post('/wallets', [DashboardController::class, 'storeWallet'])->name('wallets.store');
 Route::put('/wallets/{wallet}', [DashboardController::class, 'updateWallet'])->name('wallets.update');
+Route::post('/wallets/{wallet}/refresh', [DashboardController::class, 'refreshWallet'])->name('wallets.refresh');
 Route::delete('/wallets/{wallet}', [DashboardController::class, 'destroyWallet'])->name('wallets.destroy');
 Route::get('/settings', [DashboardController::class, 'settings'])->name('settings');
-Route::post('/settings/polymarket', [DashboardController::class, 'updatePolymarketSettings'])->name('settings.polymarket.update');
 Route::post('/settings/polymarket/select-account', [DashboardController::class, 'selectPolymarketAccount'])->name('settings.polymarket.select-account');
 Route::get('/settings/polymarket/accounts', [PolymarketAccountController::class, 'index'])->name('settings.polymarket.accounts.index');
 Route::post('/settings/polymarket/accounts', [PolymarketAccountController::class, 'store'])->name('settings.polymarket.accounts.store');
 Route::get('/settings/polymarket/accounts/{account}', [PolymarketAccountController::class, 'show'])->name('settings.polymarket.accounts.show');
 Route::put('/settings/polymarket/accounts/{account}', [PolymarketAccountController::class, 'update'])->name('settings.polymarket.accounts.update');
-Route::post('/settings/polymarket/accounts/{account}/credentials', [PolymarketAccountController::class, 'storeCredentials'])->name('settings.polymarket.accounts.credentials.store');
 Route::post('/settings/polymarket/accounts/{account}/validate', [PolymarketAccountController::class, 'validateCredentials'])->name('settings.polymarket.accounts.validate');
 Route::post('/settings/polymarket/accounts/{account}/rotate', [PolymarketAccountController::class, 'rotateCredentials'])->name('settings.polymarket.accounts.rotate');
 Route::post('/settings/polymarket/accounts/{account}/revoke', [PolymarketAccountController::class, 'revokeCredentials'])->name('settings.polymarket.accounts.revoke');

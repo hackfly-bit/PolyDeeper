@@ -3,24 +3,60 @@
 namespace App\Services\Polymarket;
 
 use App\Models\PolymarketAccount;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 class PolymarketAuthService
 {
     public function __construct(
-        public PolymarketConfigService $configService,
         public SecretResolverService $secretResolverService,
         public SigningService $signingService
     ) {}
 
-    public function buildL1Headers(string $timestamp, string $signature, string $address): array
+    /**
+     * @return array<string, string>
+     */
+    public function buildL1HeadersForAccount(
+        PolymarketAccount $account,
+        string $privateKey,
+        int $nonce = 0,
+        ?string $timestamp = null
+    ): array
     {
+        $address = trim((string) $account->wallet_address);
+
+        if ($address === '') {
+            throw new RuntimeException('Wallet address account Polymarket wajib diisi sebelum validate credential.');
+        }
+
+        $signerAddress = $this->signingService->addressFromPrivateKey($privateKey);
+
+        if (! str_starts_with(strtolower($address), '0x')) {
+            $address = '0x'.ltrim($address, '0x');
+        }
+
+        if (! hash_equals(strtolower($address), strtolower($signerAddress))) {
+            throw new RuntimeException(
+                'Menurut Polymarket Doc, `POLY_ADDRESS` pada L1 harus alamat signer Polygon. '.
+                'Pastikan `wallet_address` sama dengan alamat dari private key pada `env_key_name`, dan gunakan `funder_address` hanya untuk proxy wallet.'
+            );
+        }
+
+        $resolvedTimestamp = $timestamp ?? $this->getServerTimestamp();
+        $signature = $this->signingService->signClobAuthMessage(
+            $signerAddress,
+            $resolvedTimestamp,
+            $nonce,
+            $privateKey
+        );
+
         return [
-            'POLY_ADDRESS' => $address,
+            'POLY_ADDRESS' => $signerAddress,
             'POLY_SIGNATURE' => $signature,
-            'POLY_TIMESTAMP' => $timestamp,
-            'POLY_NONCE' => '0',
+            'POLY_TIMESTAMP' => $resolvedTimestamp,
+            'POLY_NONCE' => (string) $nonce,
         ];
     }
 
@@ -28,21 +64,6 @@ class PolymarketAuthService
      * @param  array|string|null  $body
      * @return array<string, string>
      */
-    public function buildL2Headers(string $method, string $requestPath, array|string|null $body = null): array
-    {
-        $config = $this->configService->tradingConfig();
-
-        return $this->buildL2HeadersWithCredentials(
-            $config['address'],
-            $config['api_key'],
-            $config['api_secret'],
-            $config['api_passphrase'],
-            $method,
-            $requestPath,
-            $body
-        );
-    }
-
     public function buildL2HeadersForAccount(
         PolymarketAccount $account,
         string $method,
@@ -122,15 +143,15 @@ class PolymarketAuthService
     /**
      * @return array{ok:bool,status:int,body:array}
      */
-    public function validateL2Credentials(): array
+    public function validateL2CredentialsForAccount(PolymarketAccount $account): array
     {
-        $host = rtrim((string) config('services.polymarket.clob_host', 'https://clob.polymarket.com'), '/');
-
-        $response = Http::baseUrl($host)
-            ->timeout((int) config('services.polymarket.timeout_seconds', 15))
-            ->acceptJson()
-            ->withHeaders($this->buildL2Headers('GET', '/data/orders'))
-            ->get('/data/orders');
+        try {
+            $response = $this->request()
+                ->withHeaders($this->buildL2HeadersForAccount($account, 'GET', '/data/orders'))
+                ->get('/data/orders');
+        } catch (ConnectionException $exception) {
+            throw new RuntimeException($this->connectionFailureMessage('/data/orders'), previous: $exception);
+        }
 
         return [
             'ok' => $response->successful(),
@@ -141,12 +162,11 @@ class PolymarketAuthService
 
     public function getServerTimestamp(): string
     {
-        $host = rtrim((string) config('services.polymarket.clob_host', 'https://clob.polymarket.com'), '/');
-
-        $response = Http::baseUrl($host)
-            ->timeout((int) config('services.polymarket.timeout_seconds', 15))
-            ->acceptJson()
-            ->get('/time');
+        try {
+            $response = $this->request()->get('/time');
+        } catch (ConnectionException $exception) {
+            throw new RuntimeException($this->connectionFailureMessage('/time'), previous: $exception);
+        }
 
         if ($response->successful()) {
             $timestamp = $response->json();
@@ -183,6 +203,39 @@ class PolymarketAuthService
         }
 
         return json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    }
+
+    private function request(): PendingRequest
+    {
+        return Http::baseUrl(rtrim((string) config('services.polymarket.clob_host', 'https://clob.polymarket.com'), '/'))
+            ->timeout((int) config('services.polymarket.timeout_seconds', 15))
+            ->acceptJson()
+            ->withOptions([
+                // 'verify' => $this->tlsVerifyOption(),
+                'verify' => false,
+            ]);
+    }
+
+    /**
+     * @return bool|string
+     */
+    private function tlsVerifyOption(): bool|string
+    {
+        $caBundle = trim((string) config('services.polymarket.ca_bundle', ''));
+
+        if ($caBundle !== '') {
+            return $caBundle;
+        }
+
+        return (bool) config('services.polymarket.tls_verify', true);
+    }
+
+    private function connectionFailureMessage(string $path): string
+    {
+        return sprintf(
+            'Gagal terhubung ke endpoint Polymarket `%s`. Menurut Polymarket Doc, endpoint ini diperlukan untuk flow autentikasi CLOB. Periksa CA certificate PHP/cURL di Windows, atau set `POLYMARKET_CA_BUNDLE`. Untuk troubleshooting lokal sementara, Anda juga bisa set `POLYMARKET_TLS_VERIFY=false`.',
+            $path
+        );
     }
 
 }

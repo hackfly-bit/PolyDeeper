@@ -18,7 +18,7 @@ class PolymarketCompromiseRunbookCommand extends Command
         $this->warn('RUNBOOK WALLET COMPROMISE');
         $this->line('1) Aktifkan kill switch account: disable trading per account.');
         $this->line('2) Revoke credential L2 account terdampak.');
-        $this->line('3) Putar signer env_key_name/vault_key_ref dan simpan credential baru.');
+        $this->line('3) Putar private key backend yang dirujuk oleh env_key_name lalu validate ulang account untuk membuat credential baru.');
         $this->line('4) Validasi credential baru lalu monitor error 401/403 minimal 15 menit.');
         $this->line('5) Audit ulang order/account log untuk scope insiden.');
 

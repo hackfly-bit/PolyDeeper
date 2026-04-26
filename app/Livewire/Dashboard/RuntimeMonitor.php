@@ -42,7 +42,7 @@ class RuntimeMonitor extends Component
         $this->redisError = null;
 
         try {
-            $this->redisReachable = Redis::ping() === 'PONG';
+            $this->redisReachable = $this->isRedisPingSuccessful(Redis::ping());
         } catch (\Throwable $exception) {
             $this->redisError = Str::limit($exception->getMessage(), 160);
         }
@@ -129,5 +129,24 @@ class RuntimeMonitor extends Component
     public function render(): View
     {
         return view('dashboard.components.runtime-monitor');
+    }
+
+    private function isRedisPingSuccessful(mixed $response): bool
+    {
+        if ($response === true) {
+            return true;
+        }
+
+        if (is_object($response) && method_exists($response, 'getPayload')) {
+            /** @var mixed $payload */
+            $payload = $response->getPayload();
+            $response = $payload;
+        }
+
+        if (! is_scalar($response)) {
+            return false;
+        }
+
+        return strtoupper(ltrim((string) $response, '+')) === 'PONG';
     }
 }
