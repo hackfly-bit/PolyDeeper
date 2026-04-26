@@ -9,6 +9,9 @@ class Signal extends Model
 {
     protected $fillable = [
         'market_id',
+        'market_ref_id',
+        'condition_id',
+        'token_id',
         'direction',
         'strength',
         'wallet_id',
@@ -22,5 +25,10 @@ class Signal extends Model
     public function wallet(): BelongsTo
     {
         return $this->belongsTo(Wallet::class);
+    }
+
+    public function market(): BelongsTo
+    {
+        return $this->belongsTo(Market::class, 'market_ref_id');
     }
 }

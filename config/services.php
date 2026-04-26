@@ -35,4 +35,19 @@ return [
         ],
     ],
 
+    'polymarket' => [
+        'gamma_host' => env('POLYMARKET_GAMMA_HOST', 'https://gamma-api.polymarket.com'),
+        'clob_host' => env('POLYMARKET_CLOB_HOST', 'https://clob.polymarket.com'),
+        'data_host' => env('POLYMARKET_DATA_HOST', 'https://data-api.polymarket.com'),
+        'chain_id' => (int) env('POLYMARKET_CHAIN_ID', 137),
+        'address' => env('POLYMARKET_ADDRESS'),
+        'signature_type' => (int) env('POLYMARKET_SIGNATURE_TYPE', 0),
+        'funder' => env('POLYMARKET_FUNDER'),
+        'signer_private_key' => env('POLYMARKET_SIGNER_PRIVATE_KEY'),
+        'api_key' => env('POLYMARKET_API_KEY'),
+        'api_secret' => env('POLYMARKET_API_SECRET'),
+        'api_passphrase' => env('POLYMARKET_API_PASSPHRASE'),
+        'timeout_seconds' => (int) env('POLYMARKET_TIMEOUT_SECONDS', 15),
+    ],
+
 ];

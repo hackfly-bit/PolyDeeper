@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" 
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}"
       x-data :class="{ 'dark': $store.darkMode.on }"
       x-init="$store.darkMode.init()">
 <head>
@@ -17,22 +17,22 @@
 </head>
 <body class="bg-gray-50 text-gray-900 dark:bg-dark-bg dark:text-gray-100 font-sans antialiased transition-colors duration-200">
     <div class="min-h-screen flex" x-data="{ sidebarOpen: false }">
-        
+
         <!-- Mobile sidebar backdrop -->
-        <div x-show="sidebarOpen" 
+        <div x-show="sidebarOpen"
              x-transition:enter="transition-opacity ease-linear duration-300"
              x-transition:enter-start="opacity-0"
              x-transition:enter-end="opacity-100"
              x-transition:leave="transition-opacity ease-linear duration-300"
              x-transition:leave-start="opacity-100"
              x-transition:leave-end="opacity-0"
-             class="fixed inset-0 bg-gray-900/80 z-40 lg:hidden" 
+             class="fixed inset-0 bg-gray-900/80 z-40 lg:hidden"
              @click="sidebarOpen = false"></div>
 
         <!-- Sidebar -->
-        <div :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'" 
+        <div :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
              class="fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-dark-surface border-r border-gray-200 dark:border-dark-border transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0">
-            
+
             <div class="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-dark-border">
                 <div class="flex items-center gap-2">
                     <div class="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center text-white font-bold text-xl">
@@ -66,15 +66,19 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a2.25 2.25 0 00-2.12 1.5l-.2.6a1.5 1.5 0 01-.95.95l-.6.2a2.25 2.25 0 00-1.5 2.12v.26c0 .95.57 1.8 1.44 2.16l.55.22c.44.17.78.51.95.95l.2.6a2.25 2.25 0 002.12 1.5h.26c.95 0 1.8-.57 2.16-1.44l.22-.55c.17-.44.51-.78.95-.95l.6-.2a2.25 2.25 0 001.5-2.12v-.26a2.25 2.25 0 00-1.5-2.12l-.6-.2a1.5 1.5 0 01-.95-.95l-.2-.6A2.25 2.25 0 0010.01 3h-.26z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z"></path></svg>
                     Settings
                 </a>
+                <a href="{{ route('settings.polymarket.accounts.index') }}" class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors {{ request()->routeIs('settings.polymarket.accounts.*') ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/20 dark:text-brand-400' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-border' }}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5V4H2v16h5m10 0v-5a3 3 0 10-6 0v5m6 0H7"></path></svg>
+                    Polymarket Accounts
+                </a>
             </nav>
         </div>
 
         <!-- Main Content -->
         <div class="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-            
+
             <!-- Ambient Background effect for dark mode -->
             <div class="hidden dark:block absolute top-0 left-0 w-full h-96 bg-brand-500/5 blur-[120px] rounded-full pointer-events-none -z-10"></div>
-            
+
             <!-- Header -->
             <header class="h-[72px] bg-white/80 dark:bg-dark-bg/80 backdrop-blur-xl border-b border-gray-200 dark:border-dark-border flex items-center justify-between px-4 sm:px-6 lg:px-8 z-10 sticky top-0">
                 <div class="flex items-center gap-4">
@@ -98,13 +102,13 @@
                         <svg x-show="!$store.darkMode.on" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
                         <svg x-show="$store.darkMode.on" style="display: none;" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
                     </button>
-                    
+
                     <!-- Profile Dropdown -->
                     <div class="relative" x-data="{ open: false }">
                         <button @click="open = !open" @click.away="open = false" class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-white flex items-center justify-center font-bold shadow-md shadow-brand-500/20 hover:shadow-lg hover:shadow-brand-500/30 transition-all focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-offset-dark-bg">
                             A
                         </button>
-                        <div x-show="open" 
+                        <div x-show="open"
                              x-transition:enter="transition ease-out duration-200"
                              x-transition:enter-start="transform opacity-0 scale-95 translate-y-2"
                              x-transition:enter-end="transform opacity-100 scale-100 translate-y-0"

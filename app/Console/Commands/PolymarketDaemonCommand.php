@@ -2,9 +2,12 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Wallet;
 use Illuminate\Console\Command;
 use App\Jobs\ProcessWalletTradeJob;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class PolymarketDaemonCommand extends Command
 {
@@ -25,43 +28,84 @@ class PolymarketDaemonCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): int
     {
-        $this->info("Starting Polymarket Daemon listener...");
+        $this->info('Starting Polymarket Daemon listener...');
 
         while (true) {
-            // Mocking a fetch to Polygon RPC / Polymarket API
-            // In real scenario, we use Web3/Guzzle to fetch latest block events for CTF contracts
             $trades = $this->fetchRecentTrades();
 
             foreach ($trades as $trade) {
-                Log::info("Detected trade from tracked wallet", ['wallet' => $trade['wallet']]);
+                Log::info('Detected trade from tracked wallet', ['wallet' => $trade['wallet']]);
 
-                // Dispatch to Queue
                 ProcessWalletTradeJob::dispatch($trade);
             }
 
-            // Sleep to avoid rate limits (e.g. 2 seconds)
             sleep(2);
         }
+
+        return self::SUCCESS;
     }
 
     private function fetchRecentTrades(): array
     {
-        // Mock response
-        if (rand(1, 10) > 8) {
-            return [
-                [
-                    'wallet' => '0xABC' . rand(100, 999),
-                    'market_id' => 'TRUMP_2028',
-                    'side' => rand(0, 1) ? 'YES' : 'NO',
-                    'price' => rand(10, 90) / 100,
-                    'size' => rand(100, 1000),
-                    'timestamp' => time(),
-                ]
-            ];
+        $wallets = Wallet::query()->pluck('address')->filter()->values()->all();
+        if (count($wallets) === 0) {
+            return [];
         }
 
-        return [];
+        $sinceTimestamp = (int) (Redis::get('polymarket:last_trade_timestamp') ?? (time() - 30));
+        $tradeRows = [];
+
+        try {
+            $response = Http::baseUrl(rtrim((string) config('services.polymarket.data_host'), '/'))
+                ->timeout((int) config('services.polymarket.timeout_seconds', 15))
+                ->acceptJson()
+                ->get('/trades', [
+                    'maker_addresses' => implode(',', $wallets),
+                    'start_ts' => $sinceTimestamp,
+                    'limit' => 200,
+                ]);
+
+            $response->throw();
+            $rows = $response->json();
+            $rows = is_array($rows) ? $rows : [];
+
+            foreach ($rows as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+
+                $wallet = (string) ($row['maker_address'] ?? $row['wallet'] ?? '');
+                if ($wallet === '') {
+                    continue;
+                }
+
+                $timestamp = (int) ($row['timestamp'] ?? time());
+                $tradeRows[] = [
+                    'wallet' => $wallet,
+                    'market_id' => (string) ($row['condition_id'] ?? $row['market_id'] ?? ''),
+                    'condition_id' => (string) ($row['condition_id'] ?? ''),
+                    'token_id' => $row['token_id'] ?? null,
+                    'side' => strtoupper((string) ($row['side'] ?? 'YES')),
+                    'price' => (float) ($row['price'] ?? 0),
+                    'size' => (float) ($row['size'] ?? 0),
+                    'tx_hash' => $row['transaction_hash'] ?? null,
+                    'timestamp' => $timestamp,
+                ];
+
+                if ($timestamp > $sinceTimestamp) {
+                    $sinceTimestamp = $timestamp;
+                }
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('Failed polling Data API trades', [
+                'message' => $exception->getMessage(),
+            ]);
+        }
+
+        Redis::set('polymarket:last_trade_timestamp', $sinceTimestamp);
+
+        return $tradeRows;
     }
 }

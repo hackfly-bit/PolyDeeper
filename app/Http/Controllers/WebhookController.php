@@ -7,6 +7,7 @@ use App\Models\ExecutionLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class WebhookController extends Controller
 {
@@ -33,16 +34,27 @@ class WebhookController extends Controller
             return response()->json(['status' => 'ignored']);
         }
 
-        // Parse payload (Mock parsing logic)
+        // Parse payload from webhook event and apply dedupe key per tx/log index.
         foreach ($request->input('logs') as $log) {
-            // Extract trade data from smart contract event
+            $txHash = (string) ($log['transactionHash'] ?? '');
+            $logIndex = (string) ($log['logIndex'] ?? '');
+            $dedupeKey = 'webhook_trade:'.sha1($txHash.'|'.$logIndex);
+
+            if (! Redis::setnx($dedupeKey, 1)) {
+                continue;
+            }
+            Redis::expire($dedupeKey, 3600);
+
             $tradeData = [
                 'wallet' => $log['address'] ?? '0xUNKNOWN',
-                'market_id' => 'TRUMP_2028', // parsed from topic/data
-                'side' => 'YES',
-                'price' => 0.65,
-                'size' => 500,
-                'timestamp' => time(),
+                'market_id' => (string) ($log['conditionId'] ?? $log['condition_id'] ?? 'UNKNOWN'),
+                'condition_id' => (string) ($log['conditionId'] ?? $log['condition_id'] ?? ''),
+                'token_id' => $log['tokenId'] ?? $log['token_id'] ?? null,
+                'side' => strtoupper((string) ($log['side'] ?? 'YES')),
+                'price' => (float) ($log['price'] ?? 0),
+                'size' => (float) ($log['size'] ?? 0),
+                'tx_hash' => $txHash !== '' ? $txHash : null,
+                'timestamp' => (int) ($log['timestamp'] ?? time()),
             ];
 
             ExecutionLog::create([

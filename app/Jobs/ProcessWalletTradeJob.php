@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\ExecutionLog;
+use App\Models\Market;
 use App\Models\Wallet;
 use App\Models\WalletTrade;
 use App\Services\SignalNormalizerService;
@@ -34,16 +35,30 @@ class ProcessWalletTradeJob implements ShouldQueue
      */
     public function handle(SignalNormalizerService $normalizer): void
     {
+        $dedupeKey = $this->buildTradeDedupeKey();
+        if (! Redis::setnx($dedupeKey, 1)) {
+            return;
+        }
+        Redis::expire($dedupeKey, 3600);
+
         $walletAddress = $this->tradeData['wallet'];
         $wallet = Wallet::firstOrCreate(
             ['address' => $walletAddress],
             ['weight' => 0.5, 'win_rate' => 0, 'roi' => 0]
         );
 
+        $conditionId = $this->tradeData['condition_id'] ?? $this->tradeData['market_id'] ?? null;
+        $tokenId = $this->tradeData['token_id'] ?? null;
+        $market = $this->resolveMarket($conditionId, $tokenId);
+        $canonicalMarketId = $market?->condition_id ?? $conditionId ?? 'UNKNOWN';
+
         // 1. Save Trade to DB
         $trade = WalletTrade::create([
             'wallet_id' => $wallet->id,
-            'market_id' => $this->tradeData['market_id'],
+            'market_ref_id' => $market?->id,
+            'market_id' => $canonicalMarketId,
+            'condition_id' => $conditionId,
+            'token_id' => $tokenId,
             'side' => $this->tradeData['side'],
             'price' => $this->tradeData['price'],
             'size' => $this->tradeData['size'],
@@ -86,7 +101,7 @@ class ProcessWalletTradeJob implements ShouldQueue
 
         // 3. Debounce / Trigger Aggregation
         // We only want to trigger aggregation once every 1-2 seconds per market to avoid queue flooding.
-        $marketId = $this->tradeData['market_id'];
+        $marketId = $canonicalMarketId;
         $debounceKey = "aggregator_lock:{$marketId}";
 
         try {
@@ -132,5 +147,40 @@ class ProcessWalletTradeJob implements ShouldQueue
                 'occurred_at' => now(),
             ]);
         }
+    }
+
+    private function resolveMarket(?string $conditionId, ?string $tokenId): ?Market
+    {
+        if ($conditionId === null && $tokenId === null) {
+            return null;
+        }
+
+        return Market::query()
+            ->when($conditionId !== null, function ($query) use ($conditionId) {
+                $query->where('condition_id', $conditionId);
+            })
+            ->when($tokenId !== null, function ($query) use ($tokenId) {
+                $query->whereHas('tokens', function ($tokenQuery) use ($tokenId) {
+                    $tokenQuery->where('token_id', $tokenId);
+                });
+            })
+            ->first();
+    }
+
+    private function buildTradeDedupeKey(): string
+    {
+        $seed = implode('|', [
+            $this->tradeData['tx_hash'] ?? '',
+            $this->tradeData['wallet'] ?? '',
+            $this->tradeData['market_id'] ?? '',
+            $this->tradeData['condition_id'] ?? '',
+            $this->tradeData['token_id'] ?? '',
+            $this->tradeData['side'] ?? '',
+            (string) ($this->tradeData['size'] ?? ''),
+            (string) ($this->tradeData['price'] ?? ''),
+            (string) ($this->tradeData['timestamp'] ?? ''),
+        ]);
+
+        return 'wallet_trade_dedupe:'.sha1($seed);
     }
 }

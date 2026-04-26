@@ -3,10 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\ExecutionLog;
+use App\Models\PolymarketAccount;
 use App\Models\Position;
 use App\Models\Signal;
 use App\Models\Wallet;
 use App\Models\WalletTrade;
+use App\Services\Polymarket\PolymarketAccountOrchestratorService;
+use App\Services\Polymarket\PolymarketConfigService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -173,12 +176,101 @@ class DashboardController extends Controller
             ->with('wallet_success', 'Wallet berhasil dihapus.');
     }
 
-    public function settings(): View
+    public function settings(
+        PolymarketConfigService $configService,
+        PolymarketAccountOrchestratorService $accountOrchestratorService
+    ): View
     {
+        $polymarketConfig = $configService->tradingConfig();
+        $selectedAccount = $accountOrchestratorService->pickActiveAccount();
+
         return view('dashboard.settings', [
             'pageTitle' => 'System Settings',
             'runtime' => $this->runtimeStatus(),
+            'polymarketAccounts' => PolymarketAccount::query()
+                ->orderBy('priority')
+                ->orderBy('name')
+                ->get(['id', 'name', 'wallet_address', 'credential_status', 'is_active']),
+            'selectedPolymarketAccount' => $selectedAccount,
+            'polymarketConfig' => [
+                'address' => $selectedAccount?->wallet_address ?? $polymarketConfig['address'],
+                'funder' => $selectedAccount?->funder_address ?? $polymarketConfig['funder'],
+                'signature_type' => $selectedAccount?->signature_type ?? $polymarketConfig['signature_type'],
+                'masked_api_key' => $this->maskApiKey($selectedAccount?->api_key ?? $polymarketConfig['api_key']),
+                'has_api_secret' => ($selectedAccount?->api_secret ?? $polymarketConfig['api_secret']) !== null,
+                'has_api_passphrase' => ($selectedAccount?->api_passphrase ?? $polymarketConfig['api_passphrase']) !== null,
+                'credential_status' => $selectedAccount?->credential_status ?? 'not_configured',
+                'account_name' => $selectedAccount?->name,
+            ],
         ]);
+    }
+
+    public function selectPolymarketAccount(
+        Request $request,
+        PolymarketAccountOrchestratorService $accountOrchestratorService
+    ): RedirectResponse {
+        $validated = $request->validate([
+            'polymarket_account_id' => ['required', 'integer', 'exists:polymarket_accounts,id'],
+        ]);
+
+        $account = PolymarketAccount::query()->findOrFail($validated['polymarket_account_id']);
+        $accountOrchestratorService->selectActiveAccount($account);
+
+        return redirect()
+            ->route('settings')
+            ->with('settings_success', 'Account Polymarket aktif berhasil dipilih.');
+    }
+
+    public function updatePolymarketSettings(Request $request, PolymarketConfigService $configService): RedirectResponse
+    {
+        $validated = $request->validate([
+            'address' => ['nullable', 'string', 'max:255'],
+            'funder' => ['nullable', 'string', 'max:255'],
+            'signature_type' => ['required', 'integer', 'in:0,1,2'],
+            'api_key' => ['nullable', 'string', 'max:255'],
+            'api_secret' => ['nullable', 'string', 'max:255'],
+            'api_passphrase' => ['nullable', 'string', 'max:255'],
+            'clear_api_secret' => ['nullable', 'boolean'],
+            'clear_api_passphrase' => ['nullable', 'boolean'],
+        ]);
+
+        $payload = [
+            'address' => $validated['address'] ?? null,
+            'funder' => $validated['funder'] ?? null,
+            'signature_type' => $validated['signature_type'],
+            'api_key' => $validated['api_key'] ?? null,
+            'api_secret' => $validated['api_secret'] ?? null,
+            'api_passphrase' => $validated['api_passphrase'] ?? null,
+        ];
+
+        if ($request->boolean('clear_api_secret')) {
+            $payload['api_secret'] = '';
+        }
+
+        if ($request->boolean('clear_api_passphrase')) {
+            $payload['api_passphrase'] = '';
+        }
+
+        $configService->storeTradingConfig($payload);
+
+        return redirect()
+            ->route('settings')
+            ->with('settings_success', 'Konfigurasi kredensial Polymarket berhasil disimpan.');
+    }
+
+    private function maskApiKey(?string $apiKey): ?string
+    {
+        if ($apiKey === null || trim($apiKey) === '') {
+            return null;
+        }
+
+        $keyLength = strlen($apiKey);
+
+        if ($keyLength <= 4) {
+            return str_repeat('*', $keyLength);
+        }
+
+        return substr($apiKey, 0, 3).'****'.substr($apiKey, -4);
     }
 
     /**

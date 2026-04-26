@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\ExecutionLog;
+use App\Services\Polymarket\PolymarketAccountOrchestratorService;
 use App\Services\AiPrediction\AiPredictorInterface;
 use App\Services\FusionEngineService;
 use App\Services\RiskManagerService;
@@ -30,7 +31,8 @@ class FusionDecisionJob implements ShouldQueue
     public function handle(
         AiPredictorInterface $aiPredictor,
         FusionEngineService $fusionEngine,
-        RiskManagerService $riskManager
+        RiskManagerService $riskManager,
+        PolymarketAccountOrchestratorService $accountOrchestratorService
     ): void {
         Log::info('Fusion Decision Started', ['market_id' => $this->marketId]);
         ExecutionLog::create([
@@ -117,6 +119,15 @@ class FusionDecisionJob implements ShouldQueue
         ]);
 
         // 5. Execute Trade
-        ExecuteTradeJob::dispatch($this->marketId, $side, $positionSize, $features['price']);
+        $activeAccount = $accountOrchestratorService->pickActiveAccount();
+        ExecuteTradeJob::dispatch(
+            $this->marketId,
+            $side,
+            $positionSize,
+            $features['price'],
+            null,
+            null,
+            $activeAccount?->id
+        );
     }
 }

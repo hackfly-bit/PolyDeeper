@@ -24,15 +24,32 @@ class ExecuteTradeJob implements ShouldQueue
 
     protected float $price;
 
+    protected ?string $conditionId;
+
+    protected ?string $tokenId;
+
+    protected ?int $accountId;
+
     /**
      * Create a new job instance.
      */
-    public function __construct(string $marketId, string $side, float $size, float $price)
+    public function __construct(
+        string $marketId,
+        string $side,
+        float $size,
+        float $price,
+        ?string $conditionId = null,
+        ?string $tokenId = null,
+        ?int $accountId = null
+    )
     {
         $this->marketId = $marketId;
         $this->side = $side;
         $this->size = $size;
         $this->price = $price;
+        $this->conditionId = $conditionId;
+        $this->tokenId = $tokenId;
+        $this->accountId = $accountId;
     }
 
     /**
@@ -54,11 +71,18 @@ class ExecuteTradeJob implements ShouldQueue
         ]);
 
         try {
-            $result = $executor->execute($this->marketId, $this->side, $this->size, $this->price);
+            $result = $executor->execute($this->marketId, $this->side, $this->size, $this->price, [
+                'condition_id' => $this->conditionId,
+                'token_id' => $this->tokenId,
+                'account_id' => $this->accountId,
+            ]);
 
             if ($result['success']) {
                 Position::create([
                     'market_id' => $this->marketId,
+                    'condition_id' => $this->conditionId ?? $this->marketId,
+                    'token_id' => $this->tokenId,
+                    'order_id' => $result['order_id'] ?? null,
                     'side' => $this->side,
                     'entry_price' => $this->price,
                     'size' => $this->size,

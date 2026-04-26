@@ -9,7 +9,10 @@ class WalletTrade extends Model
 {
     protected $fillable = [
         'wallet_id',
+        'market_ref_id',
         'market_id',
+        'condition_id',
+        'token_id',
         'side',
         'price',
         'size',
@@ -25,5 +28,10 @@ class WalletTrade extends Model
     public function wallet(): BelongsTo
     {
         return $this->belongsTo(Wallet::class);
+    }
+
+    public function market(): BelongsTo
+    {
+        return $this->belongsTo(Market::class, 'market_ref_id');
     }
 }
