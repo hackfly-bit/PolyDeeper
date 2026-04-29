@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\ExecutionLog;
 use App\Models\Market;
+use App\Models\MarketToken;
 use App\Models\Wallet;
 use App\Models\WalletTrade;
 use App\Services\SignalNormalizerService;
@@ -49,20 +50,22 @@ class ProcessWalletTradeJob implements ShouldQueue
 
         $conditionId = $this->tradeData['condition_id'] ?? $this->tradeData['market_id'] ?? null;
         $tokenId = $this->tradeData['token_id'] ?? null;
-        $market = $this->resolveMarket($conditionId, $tokenId);
+        $market = $this->syncMarketFromTradeData($conditionId, $tokenId);
         $canonicalMarketId = $market?->condition_id ?? $conditionId ?? 'UNKNOWN';
+        $tradedAt = Carbon::createFromTimestamp((int) $this->tradeData['timestamp']);
 
-        // 1. Save Trade to DB
-        $trade = WalletTrade::create([
+        // 1. Save/Sync trade to DB (idempotent)
+        $trade = WalletTrade::query()->updateOrCreate([
             'wallet_id' => $wallet->id,
-            'market_ref_id' => $market?->id,
             'market_id' => $canonicalMarketId,
             'condition_id' => $conditionId,
             'token_id' => $tokenId,
             'side' => $this->tradeData['side'],
             'price' => $this->tradeData['price'],
             'size' => $this->tradeData['size'],
-            'traded_at' => Carbon::createFromTimestamp($this->tradeData['timestamp']),
+            'traded_at' => $tradedAt,
+        ], [
+            'market_ref_id' => $market?->id,
         ]);
 
         ExecutionLog::create([
@@ -165,6 +168,41 @@ class ProcessWalletTradeJob implements ShouldQueue
                 });
             })
             ->first();
+    }
+
+    private function syncMarketFromTradeData(?string $conditionId, ?string $tokenId): ?Market
+    {
+        $market = $this->resolveMarket($conditionId, $tokenId);
+
+        if ($market === null && $conditionId !== null && $conditionId !== '') {
+            $market = Market::query()->updateOrCreate(
+                ['condition_id' => $conditionId],
+                [
+                    'slug' => $this->tradeData['market_slug'] ?? null,
+                    'title' => $this->tradeData['market_title'] ?? null,
+                    'question' => $this->tradeData['question'] ?? null,
+                    'description' => $this->tradeData['description'] ?? null,
+                    'raw_payload' => $this->tradeData,
+                    'last_synced_at' => now(),
+                ]
+            );
+        }
+
+        if ($market !== null && $tokenId !== null && $tokenId !== '') {
+            $outcome = strtoupper((string) ($this->tradeData['outcome'] ?? $this->tradeData['side'] ?? ''));
+
+            MarketToken::query()->updateOrCreate(
+                ['token_id' => $tokenId],
+                [
+                    'market_id' => $market->id,
+                    'outcome' => $outcome !== '' ? $outcome : null,
+                    'is_yes' => $outcome === 'YES',
+                    'raw_payload' => ['source' => 'trade_ingest', 'trade' => $this->tradeData],
+                ]
+            );
+        }
+
+        return $market;
     }
 
     private function buildTradeDedupeKey(): string

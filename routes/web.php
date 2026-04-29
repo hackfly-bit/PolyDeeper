@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 Route::get('/positions', [DashboardController::class, 'positions'])->name('positions');
 Route::get('/signals', [DashboardController::class, 'signals'])->name('signals');
+Route::get('/history', [DashboardController::class, 'history'])->name('history');
 Route::get('/wallets', [DashboardController::class, 'wallets'])->name('wallets');
 Route::get('/markers', [DashboardController::class, 'markers'])->name('markers');
 Route::post('/wallets', [DashboardController::class, 'storeWallet'])->name('wallets.store');

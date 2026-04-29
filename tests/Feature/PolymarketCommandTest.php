@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\ProcessWalletTradeJob;
+use App\Jobs\SyncMarketFromTradeConditionJob;
 use App\Jobs\SyncMarketsJob;
 use App\Jobs\SyncOpenOrdersJob;
 use App\Models\Market;
@@ -84,6 +85,143 @@ class PolymarketCommandTest extends TestCase
 
         Queue::assertPushed(SyncMarketsJob::class, function (SyncMarketsJob $job): bool {
             return $job->pageSize === 40 && $job->maxPages === 2 && ! $job->watchedOnly;
+        });
+    }
+
+    public function test_sync_markets_from_trades_command_runs_inline_with_latest_data(): void
+    {
+        $wallet = Wallet::query()->create([
+            'name' => 'Trade Wallet',
+            'address' => '0xmarket-sync',
+            'weight' => 1,
+            'pnl' => 0,
+            'win_rate' => 0,
+            'roi' => 0,
+            'last_active' => now(),
+        ]);
+
+        \App\Models\WalletTrade::query()->create([
+            'wallet_id' => $wallet->id,
+            'market_id' => 'condition-1',
+            'condition_id' => 'condition-1',
+            'token_id' => 'token-1',
+            'side' => 'YES',
+            'price' => 0.5,
+            'size' => 10,
+            'traded_at' => now(),
+        ]);
+
+        \App\Models\WalletTrade::query()->create([
+            'wallet_id' => $wallet->id,
+            'market_id' => 'condition-2',
+            'condition_id' => 'condition-2',
+            'token_id' => 'token-2',
+            'side' => 'NO',
+            'price' => 0.4,
+            'size' => 8,
+            'traded_at' => now()->subSecond(),
+        ]);
+
+        $this->mock(PolymarketGammaService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('syncMarketsByConditionIds')
+                ->once()
+                ->with(\Mockery::on(function ($ids): bool {
+                    $normalized = collect($ids)->values()->all();
+
+                    return $normalized === ['condition-1', 'condition-2'];
+                }))
+                ->andReturn([
+                    'requested' => 2,
+                    'found' => 2,
+                    'inserted' => 1,
+                    'updated' => 1,
+                    'tokens_upserted' => 2,
+                    'missing' => 0,
+                ]);
+        });
+
+        $this->artisan('polymarket:sync-markets-from-trades', [
+            '--lock-seconds' => 60,
+        ])
+            ->expectsOutput('Sync market dari trade selesai. requested=2 found=2 missing=0 inserted=1 updated=1 tokens_upserted=2 linked_trades=0 mode=upsert')
+            ->assertExitCode(0);
+    }
+
+    public function test_sync_markets_from_trades_command_can_sync_single_condition_id_for_testing(): void
+    {
+        $this->mock(PolymarketGammaService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('syncMarketsByConditionIds')
+                ->once()
+                ->with(\Mockery::on(function ($ids): bool {
+                    $normalized = collect($ids)->values()->all();
+
+                    return $normalized === ['condition-test-1'];
+                }))
+                ->andReturn([
+                    'requested' => 1,
+                    'found' => 1,
+                    'inserted' => 1,
+                    'updated' => 0,
+                    'tokens_upserted' => 2,
+                    'missing' => 0,
+                ]);
+        });
+
+        $this->artisan('polymarket:sync-markets-from-trades', [
+            '--condition-id' => 'condition-test-1',
+            '--lock-seconds' => 60,
+        ])
+            ->expectsOutput('Sync market dari trade selesai. requested=1 found=1 missing=0 inserted=1 updated=0 tokens_upserted=2 linked_trades=0 mode=upsert')
+            ->assertExitCode(0);
+    }
+
+    public function test_sync_markets_from_trades_command_can_dispatch_queue_jobs_for_concurrency(): void
+    {
+        Queue::fake();
+
+        $wallet = Wallet::query()->create([
+            'name' => 'Queue Wallet',
+            'address' => '0xqueue-sync',
+            'weight' => 1,
+            'pnl' => 0,
+            'win_rate' => 0,
+            'roi' => 0,
+            'last_active' => now(),
+        ]);
+
+        \App\Models\WalletTrade::query()->create([
+            'wallet_id' => $wallet->id,
+            'market_id' => 'condition-q1',
+            'condition_id' => 'condition-q1',
+            'token_id' => 'token-q1',
+            'side' => 'YES',
+            'price' => 0.5,
+            'size' => 10,
+            'traded_at' => now(),
+        ]);
+
+        \App\Models\WalletTrade::query()->create([
+            'wallet_id' => $wallet->id,
+            'market_id' => 'condition-q2',
+            'condition_id' => 'condition-q2',
+            'token_id' => 'token-q2',
+            'side' => 'NO',
+            'price' => 0.45,
+            'size' => 6,
+            'traded_at' => now()->subSecond(),
+        ]);
+
+        $this->artisan('polymarket:sync-markets-from-trades', [
+            '--queue' => true,
+            '--limit' => 2,
+            '--lock-seconds' => 60,
+        ])
+            ->expectsOutput('Sync market dari trade didispatch ke queue. queued=2 mode=queue')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(SyncMarketFromTradeConditionJob::class, 2);
+        Queue::assertPushed(SyncMarketFromTradeConditionJob::class, function (SyncMarketFromTradeConditionJob $job): bool {
+            return in_array($job->conditionId, ['condition-q1', 'condition-q2'], true);
         });
     }
 
@@ -338,5 +476,76 @@ class PolymarketCommandTest extends TestCase
         $response->assertSee('Alpha, Beta');
         $response->assertSee('Merged 2 wallet');
         $response->assertSee('Buka Polymarket');
+    }
+
+    public function test_history_page_displays_signal_and_execution_logs(): void
+    {
+        $wallet = Wallet::query()->create([
+            'name' => 'History Wallet',
+            'address' => '0xhistory',
+            'weight' => 1,
+            'pnl' => 0,
+            'win_rate' => 0,
+            'roi' => 0,
+            'last_active' => now(),
+        ]);
+
+        \App\Models\Signal::query()->create([
+            'market_id' => 'market-signal-1',
+            'condition_id' => 'condition-signal-1',
+            'token_id' => 'token-signal-1',
+            'direction' => 1,
+            'strength' => 0.88,
+            'wallet_id' => $wallet->id,
+        ]);
+
+        \App\Models\ExecutionLog::query()->create([
+            'stage' => 'trade_executed',
+            'market_id' => 'market-execution-1',
+            'wallet_address' => $wallet->address,
+            'action' => 'buy',
+            'status' => 'success',
+            'message' => 'Order executed successfully',
+            'occurred_at' => now(),
+        ]);
+
+        $response = $this->get(route('history'));
+
+        $response->assertOk();
+        $response->assertSee('History Signal & Execution', false);
+        $response->assertSee('market-signal-1');
+        $response->assertSee('market-execution-1');
+    }
+
+    public function test_history_page_filters_execution_by_status(): void
+    {
+        \App\Models\ExecutionLog::query()->create([
+            'stage' => 'trade_executed',
+            'market_id' => 'market-exec-success',
+            'wallet_address' => '0xexec1',
+            'action' => 'buy',
+            'status' => 'success',
+            'message' => 'Success',
+            'occurred_at' => now(),
+        ]);
+
+        \App\Models\ExecutionLog::query()->create([
+            'stage' => 'trade_execution_failed',
+            'market_id' => 'market-exec-failed',
+            'wallet_address' => '0xexec2',
+            'action' => 'sell',
+            'status' => 'failed',
+            'message' => 'Failed',
+            'occurred_at' => now(),
+        ]);
+
+        $response = $this->get(route('history', [
+            'type' => 'execution',
+            'status' => 'failed',
+        ]));
+
+        $response->assertOk();
+        $response->assertSee('market-exec-failed');
+        $response->assertDontSee('market-exec-success');
     }
 }

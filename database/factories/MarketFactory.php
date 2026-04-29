@@ -20,6 +20,7 @@ class MarketFactory extends Factory
         return [
             'condition_id' => '0x'.$this->faker->unique()->regexify('[a-f0-9]{64}'),
             'slug' => $this->faker->unique()->slug(),
+            'category' => $this->faker->randomElement(['Crypto', 'Politics', 'Sports']),
             'question' => $this->faker->sentence(),
             'description' => $this->faker->paragraph(),
             'active' => true,

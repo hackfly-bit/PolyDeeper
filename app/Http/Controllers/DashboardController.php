@@ -51,7 +51,10 @@ class DashboardController extends Controller
             ->whereDate('occurred_at', $today);
 
         $recentSignals = Signal::query()
-            ->with('wallet:id,address,weight')
+            ->with([
+                'wallet:id,name,address,weight',
+                'market:id,condition_id,question,title',
+            ])
             ->latest()
             ->limit(8)
             ->get();
@@ -129,6 +132,140 @@ class DashboardController extends Controller
         ]);
     }
 
+    public function history(Request $request): View
+    {
+        $selectedType = strtolower(trim((string) $request->input('type', 'all')));
+        $selectedStatus = strtolower(trim((string) $request->input('status', 'all')));
+        $selectedWalletId = (int) $request->integer('wallet_id', 0);
+        $search = trim((string) $request->input('q', ''));
+        $fromDate = trim((string) $request->input('from', ''));
+        $toDate = trim((string) $request->input('to', ''));
+
+        if (! in_array($selectedType, ['all', 'signal', 'execution'], true)) {
+            $selectedType = 'all';
+        }
+
+        $wallet = $selectedWalletId > 0 ? Wallet::query()->find($selectedWalletId) : null;
+
+        $signalsQuery = Signal::query()
+            ->with('wallet:id,name,address')
+            ->latest();
+
+        if ($selectedWalletId > 0) {
+            $signalsQuery->where('wallet_id', $selectedWalletId);
+        }
+
+        if ($selectedStatus === 'buy') {
+            $signalsQuery->where('direction', '>', 0);
+        }
+
+        if ($selectedStatus === 'sell') {
+            $signalsQuery->where('direction', '<', 0);
+        }
+
+        if ($search !== '') {
+            $searchKeyword = '%'.strtolower($search).'%';
+            $signalsQuery->where(function ($query) use ($searchKeyword): void {
+                $query->whereRaw('LOWER(COALESCE(market_id, \'\')) LIKE ?', [$searchKeyword])
+                    ->orWhereRaw('LOWER(COALESCE(condition_id, \'\')) LIKE ?', [$searchKeyword])
+                    ->orWhereRaw('LOWER(COALESCE(token_id, \'\')) LIKE ?', [$searchKeyword]);
+            });
+        }
+
+        if ($fromDate !== '') {
+            $signalsQuery->whereDate('created_at', '>=', $fromDate);
+        }
+
+        if ($toDate !== '') {
+            $signalsQuery->whereDate('created_at', '<=', $toDate);
+        }
+
+        $executionsQuery = ExecutionLog::query()
+            ->latest('occurred_at');
+
+        if ($wallet !== null && $wallet->address !== '') {
+            $executionsQuery->where('wallet_address', $wallet->address);
+        }
+
+        if ($selectedStatus !== 'all' && ! in_array($selectedStatus, ['buy', 'sell'], true)) {
+            $executionsQuery->whereRaw('LOWER(COALESCE(status, \'\')) = ?', [$selectedStatus]);
+        }
+
+        if ($search !== '') {
+            $searchKeyword = '%'.strtolower($search).'%';
+            $executionsQuery->where(function ($query) use ($searchKeyword): void {
+                $query->whereRaw('LOWER(COALESCE(market_id, \'\')) LIKE ?', [$searchKeyword])
+                    ->orWhereRaw('LOWER(COALESCE(stage, \'\')) LIKE ?', [$searchKeyword])
+                    ->orWhereRaw('LOWER(COALESCE(action, \'\')) LIKE ?', [$searchKeyword])
+                    ->orWhereRaw('LOWER(COALESCE(message, \'\')) LIKE ?', [$searchKeyword])
+                    ->orWhereRaw('LOWER(COALESCE(wallet_address, \'\')) LIKE ?', [$searchKeyword]);
+            });
+        }
+
+        if ($fromDate !== '') {
+            $executionsQuery->whereDate('occurred_at', '>=', $fromDate);
+        }
+
+        if ($toDate !== '') {
+            $executionsQuery->whereDate('occurred_at', '<=', $toDate);
+        }
+
+        $signals = $signalsQuery
+            ->with('market:id,condition_id,question,title')
+            ->paginate(20, ['*'], 'signals_page')
+            ->withQueryString();
+        $executions = $executionsQuery
+            ->paginate(20, ['*'], 'executions_page')
+            ->withQueryString();
+
+        $marketConditionIds = collect()
+            ->merge(
+                $signals->getCollection()
+                    ->pluck('market_id')
+                    ->filter()
+                    ->values()
+            )
+            ->merge(
+                $signals->getCollection()
+                    ->pluck('condition_id')
+                    ->filter()
+                    ->values()
+            )
+            ->merge(
+                $executions->getCollection()
+                    ->pluck('market_id')
+                    ->filter()
+                    ->values()
+            )
+            ->unique()
+            ->values();
+
+        $marketTitlesByCondition = Market::query()
+            ->whereIn('condition_id', $marketConditionIds)
+            ->get(['condition_id', 'question'])
+            ->mapWithKeys(function (Market $market): array {
+                $title = trim((string) ($market->question ?? ''));
+
+                return [$market->condition_id => $title];
+            });
+
+        return view('dashboard.history', [
+            'pageTitle' => 'History',
+            'selectedType' => $selectedType,
+            'selectedStatus' => $selectedStatus,
+            'selectedWalletId' => $selectedWalletId,
+            'search' => $search,
+            'fromDate' => $fromDate,
+            'toDate' => $toDate,
+            'walletOptions' => Wallet::query()
+                ->orderBy('name')
+                ->get(['id', 'name', 'address']),
+            'signals' => $signals,
+            'executions' => $executions,
+            'marketTitlesByCondition' => $marketTitlesByCondition,
+        ]);
+    }
+
     public function wallets(): View
     {
         return view('dashboard.wallets', [
@@ -137,13 +274,75 @@ class DashboardController extends Controller
         ]);
     }
 
-    public function markers(): View
+    public function markers(Request $request): View
     {
-        $markerRows = WalletTrade::query()
-            ->select('condition_id', DB::raw('MAX(traded_at) as last_traded_at'))
-            ->whereNotNull('condition_id')
-            ->where('condition_id', '!=', '')
-            ->groupBy('condition_id')
+        $selectedWalletId = (int) $request->integer('wallet_id', 0);
+        $selectedStatus = strtolower(trim((string) $request->input('status', 'all')));
+        $searchTitle = trim((string) $request->input('q', ''));
+
+        if (! in_array($selectedStatus, ['all', 'open', 'closed'], true)) {
+            $selectedStatus = 'all';
+        }
+
+        $markerQuery = WalletTrade::query()
+            ->leftJoin('markets', 'markets.condition_id', '=', 'wallet_trades.condition_id')
+            ->select([
+                'wallet_trades.condition_id',
+                DB::raw('MAX(wallet_trades.traded_at) as last_traded_at'),
+                DB::raw('MIN(CASE WHEN markets.closed = true OR (markets.end_date IS NOT NULL AND markets.end_date < CURRENT_TIMESTAMP) THEN 1 ELSE 0 END) as status_sort'),
+            ])
+            ->whereNotNull('wallet_trades.condition_id')
+            ->where('wallet_trades.condition_id', '!=', '');
+
+        if ($selectedWalletId > 0) {
+            $markerQuery->where('wallet_trades.wallet_id', $selectedWalletId);
+        }
+
+        if ($selectedStatus === 'open') {
+            $markerQuery->whereExists(function ($query): void {
+                $query->select(DB::raw(1))
+                    ->from('markets')
+                    ->whereColumn('markets.condition_id', 'wallet_trades.condition_id')
+                    ->where(function ($statusQuery): void {
+                        $statusQuery->where('markets.closed', false)
+                            ->orWhereNull('markets.closed');
+                    })
+                    ->where(function ($dateQuery): void {
+                        $dateQuery->whereNull('markets.end_date')
+                            ->orWhere('markets.end_date', '>=', now());
+                    });
+            });
+        }
+
+        if ($selectedStatus === 'closed') {
+            $markerQuery->whereExists(function ($query): void {
+                $query->select(DB::raw(1))
+                    ->from('markets')
+                    ->whereColumn('markets.condition_id', 'wallet_trades.condition_id')
+                    ->where(function ($statusQuery): void {
+                        $statusQuery->where('markets.closed', true)
+                            ->orWhere('markets.end_date', '<', now());
+                    });
+            });
+        }
+
+        if ($searchTitle !== '') {
+            $searchKeyword = '%'.strtolower($searchTitle).'%';
+
+            $markerQuery->whereExists(function ($query) use ($searchKeyword): void {
+                $query->select(DB::raw(1))
+                    ->from('markets')
+                    ->whereColumn('markets.condition_id', 'wallet_trades.condition_id')
+                    ->where(function ($titleQuery) use ($searchKeyword): void {
+                        $titleQuery->whereRaw('LOWER(COALESCE(markets.question, \'\')) LIKE ?', [$searchKeyword])
+                            ->orWhereRaw('LOWER(COALESCE(markets.title, \'\')) LIKE ?', [$searchKeyword]);
+                    });
+            });
+        }
+
+        $markerRows = $markerQuery
+            ->groupBy('wallet_trades.condition_id')
+            ->orderBy('status_sort')
             ->orderByDesc('last_traded_at')
             ->paginate(20)
             ->withQueryString();
@@ -158,12 +357,17 @@ class DashboardController extends Controller
             ->get()
             ->keyBy('condition_id');
 
+        $walletNameExpression = "CASE WHEN wallets.name != '' THEN wallets.name ELSE wallets.address END";
+        $walletNamesAggregate = DB::connection()->getDriverName() === 'pgsql'
+            ? "STRING_AGG(DISTINCT {$walletNameExpression}, ',')"
+            : "GROUP_CONCAT(DISTINCT {$walletNameExpression})";
+
         $walletAggregateByCondition = WalletTrade::query()
             ->join('wallets', 'wallets.id', '=', 'wallet_trades.wallet_id')
             ->whereIn('wallet_trades.condition_id', $conditionIds)
             ->select([
                 'wallet_trades.condition_id',
-                DB::raw("GROUP_CONCAT(DISTINCT CASE WHEN wallets.name != '' THEN wallets.name ELSE wallets.address END) AS wallet_names"),
+                DB::raw("{$walletNamesAggregate} AS wallet_names"),
                 DB::raw('COUNT(DISTINCT wallet_trades.wallet_id) AS wallet_count'),
             ])
             ->groupBy('wallet_trades.condition_id')
@@ -187,11 +391,13 @@ class DashboardController extends Controller
                         'parts' => 2,
                     ]))
                     : '-';
+                $isClosed = ($market?->closed ?? false) || ($market?->end_date?->isPast() ?? false);
 
                 return [
                     'condition_id' => $walletTrade->condition_id,
                     'title' => (string) ($market?->question ?? 'Market tanpa judul'),
                     'category' => $category,
+                    'status' => $isClosed ? 'Closed' : 'Open',
                     'wallet_names' => $walletNames->join(', '),
                     'wallet_count' => (int) ($walletAggregate->wallet_count ?? 0),
                     'market_url' => $eventSlug !== '' ? 'https://polymarket.com/event/'.$eventSlug : null,
@@ -208,6 +414,12 @@ class DashboardController extends Controller
         return view('dashboard.markers', [
             'pageTitle' => 'Marker',
             'markers' => $markerRows,
+            'walletOptions' => Wallet::query()
+                ->orderBy('name')
+                ->get(['id', 'name', 'address']),
+            'selectedWalletId' => $selectedWalletId,
+            'selectedStatus' => $selectedStatus,
+            'searchTitle' => $searchTitle,
         ]);
     }
 

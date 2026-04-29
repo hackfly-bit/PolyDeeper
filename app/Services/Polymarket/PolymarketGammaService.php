@@ -12,6 +12,48 @@ use Illuminate\Support\Facades\Http;
 
 class PolymarketGammaService
 {
+    /**
+     * @param  Collection<int, string>|array<int, string>  $conditionIds
+     * @return array{requested:int,found:int,inserted:int,updated:int,tokens_upserted:int,missing:int}
+     */
+    public function syncMarketsByConditionIds(Collection|array $conditionIds): array
+    {
+        $ids = collect($conditionIds)
+            ->map(fn (mixed $value): string => trim((string) $value))
+            ->filter(fn (string $value): bool => $value !== '')
+            ->unique()
+            ->values();
+
+        $requested = $ids->count();
+        $found = 0;
+        $inserted = 0;
+        $updated = 0;
+        $tokensUpserted = 0;
+
+        foreach ($ids as $conditionId) {
+            $marketPayload = $this->fetchMarketByConditionId($conditionId);
+
+            if (! is_array($marketPayload)) {
+                continue;
+            }
+
+            $found++;
+            $persistResult = $this->persistMarketPayload($marketPayload);
+            $inserted += $persistResult['inserted'];
+            $updated += $persistResult['updated'];
+            $tokensUpserted += $persistResult['tokens_upserted'];
+        }
+
+        return [
+            'requested' => $requested,
+            'found' => $found,
+            'inserted' => $inserted,
+            'updated' => $updated,
+            'tokens_upserted' => $tokensUpserted,
+            'missing' => max(0, $requested - $found),
+        ];
+    }
+
     public function fetchMarkets(int $limit = 100, int $offset = 0, bool $active = true, bool $closed = false): array
     {
         $response = Http::baseUrl($this->gammaHost())
@@ -120,6 +162,8 @@ class PolymarketGammaService
 
         $attributes = [
             'slug' => $marketPayload['slug'] ?? null,
+            'title' => $marketPayload['title'] ?? null,
+            'category' => $marketPayload['category'] ?? null,
             'question' => $marketPayload['question'] ?? null,
             'description' => $marketPayload['description'] ?? null,
             'active' => (bool) ($marketPayload['active'] ?? true),
@@ -156,8 +200,8 @@ class PolymarketGammaService
             ->get('/markets', [
                 'active' => 'true',
                 'closed' => 'false',
-                'condition_id' => $conditionId,
-                'limit' => 1,
+                'condition_ids' => $conditionId,
+                'limit' => 5,
                 'offset' => 0,
             ]);
 
@@ -170,9 +214,75 @@ class PolymarketGammaService
             return null;
         }
 
-        $firstMarket = $markets[0] ?? null;
+        foreach ($markets as $market) {
+            if (! is_array($market)) {
+                continue;
+            }
 
-        return is_array($firstMarket) ? $firstMarket : null;
+            if ($this->extractConditionId($market) === $conditionId) {
+                return $market;
+            }
+        }
+
+        return null;
+    }
+
+    private function fetchMarketByConditionId(string $conditionId): ?array
+    {
+        $queryCandidates = [
+            [
+                'condition_ids' => $conditionId,
+                'limit' => 5,
+                'offset' => 0,
+            ],
+            [
+                'active' => 'true',
+                'closed' => 'false',
+                'condition_ids' => $conditionId,
+                'limit' => 5,
+                'offset' => 0,
+            ],
+            [
+                'active' => 'false',
+                'closed' => 'true',
+                'condition_ids' => $conditionId,
+                'limit' => 5,
+                'offset' => 0,
+            ],
+        ];
+
+        foreach ($queryCandidates as $query) {
+            $response = Http::baseUrl($this->gammaHost())
+                ->timeout((int) config('services.polymarket.timeout_seconds', 15))
+                ->acceptJson()
+                ->withOptions([
+                    'verify' => false,
+                ])
+                ->retry(2, 300)
+                ->get('/markets', $query);
+
+            $response->throw();
+
+            $payload = $response->json();
+            $markets = is_array($payload) ? $payload : [];
+
+            foreach ($markets as $market) {
+                if (! is_array($market)) {
+                    continue;
+                }
+
+                if ($this->extractConditionId($market) === $conditionId) {
+                    return $market;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function extractConditionId(array $marketPayload): string
+    {
+        return trim((string) ($marketPayload['conditionId'] ?? $marketPayload['condition_id'] ?? ''));
     }
 
     /**

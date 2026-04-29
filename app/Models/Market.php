@@ -13,6 +13,8 @@ class Market extends Model
     protected $fillable = [
         'condition_id',
         'slug',
+        'title',
+        'category',
         'question',
         'description',
         'active',
