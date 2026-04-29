@@ -3,11 +3,14 @@
 namespace Tests\Feature;
 
 use App\Jobs\ProcessWalletTradeJob;
+use App\Jobs\SyncMarketsJob;
 use App\Jobs\SyncOpenOrdersJob;
+use App\Models\Market;
 use App\Models\PolymarketAccount;
 use App\Models\Wallet;
 use App\Services\Polymarket\PolymarketCredentialService;
 use App\Services\Polymarket\PolymarketGammaService;
+use App\Services\OrderSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -32,7 +35,7 @@ class PolymarketCommandTest extends TestCase
         $this->mock(PolymarketGammaService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('syncActiveMarkets')
                 ->once()
-                ->with(50, 3)
+                ->with(50, 3, true)
                 ->andReturn([
                     'inserted' => 2,
                     'updated' => 4,
@@ -42,12 +45,46 @@ class PolymarketCommandTest extends TestCase
         });
 
         $this->artisan('polymarket:sync-markets', [
+            '--inline' => true,
             '--limit' => 50,
             '--max-pages' => 3,
             '--lock-seconds' => 60,
         ])
-            ->expectsOutput('Sync markets selesai. inserted=2 updated=4 tokens_upserted=8 pages=3')
+            ->expectsOutput('Sync markets selesai. scope=watched-only inserted=2 updated=4 tokens_upserted=8 pages=3')
             ->assertExitCode(0);
+    }
+
+    public function test_sync_markets_command_uses_queue_by_default(): void
+    {
+        Queue::fake();
+
+        $this->artisan('polymarket:sync-markets', [
+            '--limit' => 70,
+            '--max-pages' => 4,
+        ])
+            ->expectsOutput('Dispatch sync markets diminta. scope=watched-only limit=70 max_pages=4')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(SyncMarketsJob::class, function (SyncMarketsJob $job): bool {
+            return $job->pageSize === 70 && $job->maxPages === 4 && $job->watchedOnly;
+        });
+    }
+
+    public function test_sync_markets_command_can_disable_watched_only_mode(): void
+    {
+        Queue::fake();
+
+        $this->artisan('polymarket:sync-markets', [
+            '--limit' => 40,
+            '--max-pages' => 2,
+            '--all' => true,
+        ])
+            ->expectsOutput('Dispatch sync markets diminta. scope=all limit=40 max_pages=2')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(SyncMarketsJob::class, function (SyncMarketsJob $job): bool {
+            return $job->pageSize === 40 && $job->maxPages === 2 && ! $job->watchedOnly;
+        });
     }
 
     public function test_sync_orders_command_queues_jobs_only_for_active_accounts(): void
@@ -57,14 +94,15 @@ class PolymarketCommandTest extends TestCase
         $activeAccount = PolymarketAccount::factory()->create([
             'name' => 'Alpha Account',
             'is_active' => true,
+            'credential_status' => 'active',
         ]);
         PolymarketAccount::factory()->create([
             'name' => 'Dormant Account',
             'is_active' => false,
+            'credential_status' => 'active',
         ]);
 
         $this->artisan('polymarket:sync-orders', [
-            '--queue' => true,
             '--limit' => 75,
         ])
             ->expectsOutput(sprintf(
@@ -79,6 +117,37 @@ class PolymarketCommandTest extends TestCase
             return $job->accountId === $activeAccount->id && $job->limit === 75;
         });
         Queue::assertPushed(SyncOpenOrdersJob::class, 1);
+    }
+
+    public function test_sync_orders_command_inline_continues_when_one_account_fails(): void
+    {
+        $account = PolymarketAccount::factory()->create([
+            'name' => 'Broken Account',
+            'is_active' => true,
+            'credential_status' => 'active',
+        ]);
+
+        $this->mock(OrderSyncService::class, function (MockInterface $mock) use ($account): void {
+            $mock->shouldReceive('syncOpenOrders')
+                ->once()
+                ->with(200, \Mockery::on(function (PolymarketAccount $subject) use ($account): bool {
+                    return $subject->is($account);
+                }))
+                ->andThrow(new RuntimeException('Konfigurasi L2 Polymarket belum lengkap.'));
+        });
+
+        $this->artisan('polymarket:sync-orders', [
+            '--inline' => true,
+            '--account' => $account->id,
+            '--lock-seconds' => 30,
+        ])
+            ->expectsOutput(sprintf(
+                'Sync order gagal untuk account #%d (%s): Konfigurasi L2 Polymarket belum lengkap.',
+                $account->id,
+                $account->name
+            ))
+            ->expectsOutput('Sync order inline selesai. processed=0 skipped=0 failed=1 total_synced=0')
+            ->assertExitCode(0);
     }
 
     public function test_listen_command_once_mode_dispatches_trades_and_updates_cursor(): void
@@ -212,5 +281,62 @@ class PolymarketCommandTest extends TestCase
             ->expectsOutput('Polymarket Auth Check')
             ->expectsOutput('Secret env key tidak ditemukan.')
             ->assertExitCode(1);
+    }
+
+    public function test_markers_page_merges_multiple_wallet_names_for_same_market(): void
+    {
+        $walletAlpha = Wallet::query()->create([
+            'name' => 'Alpha',
+            'address' => '0xalpha',
+            'weight' => 1,
+            'pnl' => 0,
+            'win_rate' => 0,
+            'roi' => 0,
+            'last_active' => now(),
+        ]);
+        $walletBeta = Wallet::query()->create([
+            'name' => 'Beta',
+            'address' => '0xbeta',
+            'weight' => 1,
+            'pnl' => 0,
+            'win_rate' => 0,
+            'roi' => 0,
+            'last_active' => now(),
+        ]);
+
+        $market = Market::factory()->create([
+            'condition_id' => 'condition-merge',
+            'slug' => 'will-eth-go-up-this-week',
+            'question' => 'Will ETH go up this week?',
+            'description' => 'Aturan market ETH',
+            'raw_payload' => [
+                'category' => 'Crypto',
+                'volume' => 12345.67,
+                'context' => 'Konteks market ETH',
+            ],
+            'end_date' => now()->addDays(2),
+        ]);
+
+        foreach ([$walletAlpha, $walletBeta] as $wallet) {
+            \App\Models\WalletTrade::query()->create([
+                'wallet_id' => $wallet->id,
+                'market_ref_id' => $market->id,
+                'market_id' => $market->condition_id,
+                'condition_id' => $market->condition_id,
+                'token_id' => 'token-'.$wallet->id,
+                'side' => 'YES',
+                'price' => 0.5,
+                'size' => 10,
+                'traded_at' => now(),
+            ]);
+        }
+
+        $response = $this->get(route('markers'));
+
+        $response->assertOk();
+        $response->assertSee('Will ETH go up this week?');
+        $response->assertSee('Alpha, Beta');
+        $response->assertSee('Merged 2 wallet');
+        $response->assertSee('Buka Polymarket');
     }
 }

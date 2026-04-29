@@ -5,11 +5,11 @@ namespace App\Console\Commands;
 use App\Jobs\ProcessWalletTradeJob;
 use App\Models\Wallet;
 use Illuminate\Console\Command;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use Psr\Log\LoggerInterface;
 use Throwable;
 
 class PolymarketDaemonCommand extends Command
@@ -18,9 +18,11 @@ class PolymarketDaemonCommand extends Command
 
     private const CURSOR_KEY = 'polymarket:last_trade_timestamp';
 
+    private const LOG_CHANNEL = 'polymarket-listener';
+
     protected $signature = 'polymarket:listen
         {--once : Run a single polling cycle and exit}
-        {--sleep=2 : Delay between polling cycles in seconds}
+        {--sleep=3 : Delay between polling cycles in seconds}
         {--limit=200 : Max trade rows fetched per request}
         {--lookback=30 : Initial lookback in seconds when cursor is empty}
         {--rewind=5 : Rewind cursor in seconds to reduce missed trades between loops}
@@ -71,7 +73,7 @@ class PolymarketDaemonCommand extends Command
         if ($result === false) {
             $this->warn('Listener tidak dijalankan karena instance lain masih memegang lock.');
 
-            Log::warning('Polymarket listener start skipped because another instance is already running', [
+            $this->listenerLogger()->warning('Polymarket listener start skipped because another instance is already running', [
                 'lock_key' => self::LISTENER_LOCK_KEY,
                 'lock_seconds' => $lockSeconds,
             ]);
@@ -101,7 +103,7 @@ class PolymarketDaemonCommand extends Command
             $maxLoops
         ));
 
-        Log::info('Polymarket listener started', [
+        $this->listenerLogger()->info('Polymarket listener started', [
             'once' => $runOnce,
             'sleep_seconds' => $sleepSeconds,
             'limit' => $limit,
@@ -112,6 +114,8 @@ class PolymarketDaemonCommand extends Command
         ]);
 
         $loop = 0;
+        $consecutiveIdleLoops = 0;
+        $consecutiveTruncatedLoops = 0;
 
         while ($maxLoops === 0 || $loop < $maxLoops) {
             $loop++;
@@ -140,32 +144,63 @@ class PolymarketDaemonCommand extends Command
                 $message .= ' error='.$summary['error'];
             }
 
+            $isIdleLoop = $summary['wallet_count'] > 0 && $summary['error'] === null && $summary['fetched'] === 0;
+
+            if ($isIdleLoop) {
+                $consecutiveIdleLoops++;
+            } else {
+                $consecutiveIdleLoops = 0;
+            }
+
+            if ($summary['truncated']) {
+                $consecutiveTruncatedLoops++;
+            } else {
+                $consecutiveTruncatedLoops = 0;
+            }
+
             if ($summary['wallet_count'] === 0) {
                 $this->warn('Listener idle: belum ada wallet aktif untuk dipoll.');
             } elseif ($summary['error'] !== null) {
                 $this->warn($message);
+            } elseif ($isIdleLoop) {
+                if ($consecutiveIdleLoops === 1) {
+                    $this->line('Tidak ada trade baru untuk wallet terpantau. Listener akan lanjut polling...');
+                } elseif ($consecutiveIdleLoops % 10 === 0) {
+                    $this->line(sprintf(
+                        'Masih belum ada trade baru setelah %d loop (cursor=%d).',
+                        $consecutiveIdleLoops,
+                        $summary['next_cursor']
+                    ));
+                }
             } else {
                 $this->line($message);
             }
 
-            Log::info('Polymarket listener loop completed', [
+            $this->listenerLogger()->info('Polymarket listener loop completed', [
                 'loop' => $loop,
                 'wallet_count' => $summary['wallet_count'],
                 'requested_since' => $summary['requested_since'],
                 'stored_cursor' => $summary['stored_cursor'],
                 'next_cursor' => $summary['next_cursor'],
+                'raw_rows' => $summary['raw_rows'],
                 'fetched' => $summary['fetched'],
                 'dispatched' => $dispatched,
                 'truncated' => $summary['truncated'],
                 'error' => $summary['error'],
             ]);
 
-            if ($summary['truncated']) {
-                $this->warn('Respons trade mencapai batas limit. Pertimbangkan naikkan --limit atau kecilkan --sleep.');
+            if ($summary['truncated'] && ($consecutiveTruncatedLoops === 1 || $consecutiveTruncatedLoops % 10 === 0)) {
+                $this->warn(sprintf(
+                    'Respons trade menyentuh limit (%d) sebanyak %d loop berturut-turut. Pertimbangkan naikkan --limit atau kecilkan --sleep.',
+                    $limit,
+                    $consecutiveTruncatedLoops
+                ));
 
-                Log::warning('Polymarket listener response hit the configured limit; some trades may require another polling cycle', [
+                $this->listenerLogger()->warning('Polymarket listener response hit the configured limit; some trades may require another polling cycle', [
                     'loop' => $loop,
+                    'consecutive_truncated_loops' => $consecutiveTruncatedLoops,
                     'limit' => $limit,
+                    'raw_rows' => $summary['raw_rows'],
                     'fetched' => $summary['fetched'],
                     'requested_since' => $summary['requested_since'],
                     'next_cursor' => $summary['next_cursor'],
@@ -175,7 +210,7 @@ class PolymarketDaemonCommand extends Command
             if ($summary['error'] !== null && $stopOnError) {
                 $this->error('Listener dihentikan karena terjadi error polling dan --stop-on-error aktif.');
 
-                Log::error('Polymarket listener stopped because polling failed and stop-on-error is enabled', [
+                $this->listenerLogger()->error('Polymarket listener stopped because polling failed and stop-on-error is enabled', [
                     'loop' => $loop,
                     'error' => $summary['error'],
                 ]);
@@ -194,7 +229,7 @@ class PolymarketDaemonCommand extends Command
 
         $this->info(sprintf('Polymarket listener berhenti setelah %d loop.', $loop));
 
-        Log::info('Polymarket listener stopped', [
+        $this->listenerLogger()->info('Polymarket listener stopped', [
             'loops' => $loop,
         ]);
 
@@ -207,6 +242,7 @@ class PolymarketDaemonCommand extends Command
      *     requested_since:int,
      *     stored_cursor:int,
      *     next_cursor:int,
+     *     raw_rows:int,
      *     fetched:int,
      *     truncated:bool,
      *     error:?string,
@@ -230,6 +266,7 @@ class PolymarketDaemonCommand extends Command
                 'requested_since' => $requestedSince,
                 'stored_cursor' => $storedCursor,
                 'next_cursor' => $storedCursor,
+                'raw_rows' => 0,
                 'fetched' => 0,
                 'truncated' => false,
                 'error' => null,
@@ -239,52 +276,60 @@ class PolymarketDaemonCommand extends Command
 
         $tradeRows = [];
         $highestTimestamp = $storedCursor;
+        $rawRows = 0;
         $truncated = false;
+        $seenTradeKeys = [];
 
         try {
-            $response = Http::baseUrl(rtrim((string) config('services.polymarket.data_host'), '/'))
-                ->timeout((int) config('services.polymarket.timeout_seconds', 15))
-                ->acceptJson()
-                ->withOptions([
-                    'verify' => false,
-                ])
-                ->retry(2, 300)
-                ->get('/trades', [
-                    'maker_addresses' => $wallets->implode(','),
-                    'start_ts' => $requestedSince,
-                    'limit' => $limit,
-                ]);
+            foreach ($wallets as $trackedWallet) {
+                $response = Http::baseUrl(rtrim((string) config('services.polymarket.data_host'), '/'))
+                    ->timeout((int) config('services.polymarket.timeout_seconds', 15))
+                    ->acceptJson()
+                    ->withOptions([
+                        'verify' => false,
+                    ])
+                    ->retry(2, 300)
+                    ->get('/trades', [
+                        'user' => $trackedWallet,
+                        'start_ts' => $requestedSince,
+                        'limit' => $limit,
+                    ]);
 
-            $response->throw();
-            $rows = $response->json();
-            $rows = is_array($rows) ? $rows : [];
-            $truncated = count($rows) >= $limit;
+                $response->throw();
 
-            foreach ($rows as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
+                $rows = $this->normalizeTradeRows($response->json());
+                $rowCount = count($rows);
+                $rawRows += $rowCount;
+                $truncated = $truncated || $rowCount >= $limit;
 
-                $wallet = (string) ($row['maker_address'] ?? $row['wallet'] ?? '');
-                if ($wallet === '') {
-                    continue;
-                }
+                foreach ($rows as $row) {
+                    $wallet = (string) ($row['maker_address'] ?? $row['makerAddress'] ?? $row['wallet'] ?? $row['proxyWallet'] ?? $trackedWallet);
+                    $timestamp = (int) ($row['timestamp'] ?? $requestedSince);
+                    $conditionId = (string) ($row['condition_id'] ?? $row['conditionId'] ?? $row['market_id'] ?? $row['marketId'] ?? '');
+                    $tokenId = $row['token_id'] ?? $row['tokenId'] ?? $row['asset'] ?? null;
+                    $txHash = $row['transaction_hash'] ?? $row['transactionHash'] ?? null;
 
-                $timestamp = (int) ($row['timestamp'] ?? $requestedSince);
-                $tradeRows[] = [
-                    'wallet' => $wallet,
-                    'market_id' => (string) ($row['condition_id'] ?? $row['market_id'] ?? ''),
-                    'condition_id' => (string) ($row['condition_id'] ?? ''),
-                    'token_id' => $row['token_id'] ?? null,
-                    'side' => strtoupper((string) ($row['side'] ?? 'YES')),
-                    'price' => (float) ($row['price'] ?? 0),
-                    'size' => (float) ($row['size'] ?? 0),
-                    'tx_hash' => $row['transaction_hash'] ?? null,
-                    'timestamp' => $timestamp,
-                ];
+                    $tradeKey = strtolower((string) ($txHash ?? '')).'|'.$conditionId.'|'.strtolower($wallet).'|'.$timestamp;
+                    if (isset($seenTradeKeys[$tradeKey])) {
+                        continue;
+                    }
+                    $seenTradeKeys[$tradeKey] = true;
 
-                if ($timestamp > $highestTimestamp) {
-                    $highestTimestamp = $timestamp;
+                    $tradeRows[] = [
+                        'wallet' => $wallet,
+                        'market_id' => $conditionId,
+                        'condition_id' => $conditionId,
+                        'token_id' => $tokenId,
+                        'side' => strtoupper((string) ($row['side'] ?? 'YES')),
+                        'price' => (float) ($row['price'] ?? 0),
+                        'size' => (float) ($row['size'] ?? 0),
+                        'tx_hash' => $txHash,
+                        'timestamp' => $timestamp,
+                    ];
+
+                    if ($timestamp > $highestTimestamp) {
+                        $highestTimestamp = $timestamp;
+                    }
                 }
             }
 
@@ -292,7 +337,7 @@ class PolymarketDaemonCommand extends Command
                 return $left['timestamp'] <=> $right['timestamp'];
             });
         } catch (Throwable $exception) {
-            Log::warning('Polymarket listener failed polling Data API trades', [
+            $this->listenerLogger()->warning('Polymarket listener failed polling Data API trades', [
                 'message' => $exception->getMessage(),
                 'requested_since' => $requestedSince,
                 'limit' => $limit,
@@ -303,6 +348,7 @@ class PolymarketDaemonCommand extends Command
                 'requested_since' => $requestedSince,
                 'stored_cursor' => $storedCursor,
                 'next_cursor' => $storedCursor,
+                'raw_rows' => 0,
                 'fetched' => 0,
                 'truncated' => false,
                 'error' => $exception->getMessage(),
@@ -317,10 +363,44 @@ class PolymarketDaemonCommand extends Command
             'requested_since' => $requestedSince,
             'stored_cursor' => $storedCursor,
             'next_cursor' => $highestTimestamp,
+            'raw_rows' => $rawRows,
             'fetched' => count($tradeRows),
             'truncated' => $truncated,
             'error' => null,
             'trades' => $tradeRows,
         ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalizeTradeRows(mixed $decoded): array
+    {
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        if (array_is_list($decoded)) {
+            return collect($decoded)
+                ->filter(fn (mixed $row): bool => is_array($row))
+                ->values()
+                ->all();
+        }
+
+        $embedded = $decoded['data'] ?? $decoded['trades'] ?? null;
+
+        if (is_array($embedded) && array_is_list($embedded)) {
+            return collect($embedded)
+                ->filter(fn (mixed $row): bool => is_array($row))
+                ->values()
+                ->all();
+        }
+
+        return [$decoded];
+    }
+
+    private function listenerLogger(): LoggerInterface
+    {
+        return Log::channel(self::LOG_CHANNEL);
     }
 }

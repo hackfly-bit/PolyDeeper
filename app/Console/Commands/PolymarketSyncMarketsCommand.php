@@ -11,7 +11,9 @@ use Illuminate\Support\Facades\Log;
 class PolymarketSyncMarketsCommand extends Command
 {
     protected $signature = 'polymarket:sync-markets
-        {--queue : Dispatch to queue instead of running inline}
+        {--inline : Run sync inline instead of dispatching to queue}
+        {--queue : Force queue dispatch mode (default behavior)}
+        {--all : Sync all active markets (disable watched-only mode)}
         {--limit=100 : Number of records per request page}
         {--max-pages=10 : Maximum pages fetched in one run}
         {--lock-seconds=900 : Lock duration in seconds for inline execution}';
@@ -26,17 +28,21 @@ class PolymarketSyncMarketsCommand extends Command
         $limit = max(1, (int) $this->option('limit'));
         $maxPages = max(1, (int) $this->option('max-pages'));
         $lockSeconds = max(30, (int) $this->option('lock-seconds'));
+        $queueMode = ! (bool) $this->option('inline') || (bool) $this->option('queue');
+        $watchedOnly = ! (bool) $this->option('all');
 
-        if ((bool) $this->option('queue')) {
-            SyncMarketsJob::dispatch($limit, $maxPages);
+        if ($queueMode) {
+            SyncMarketsJob::dispatch($limit, $maxPages, $watchedOnly);
 
             $this->info(sprintf(
-                'Dispatch sync markets diminta. limit=%d max_pages=%d',
+                'Dispatch sync markets diminta. scope=%s limit=%d max_pages=%d',
+                $watchedOnly ? 'watched-only' : 'all',
                 $limit,
                 $maxPages
             ));
 
             Log::info('Polymarket market sync queued from artisan command', [
+                'watched_only' => $watchedOnly,
                 'page_size' => $limit,
                 'max_pages' => $maxPages,
             ]);
@@ -44,14 +50,15 @@ class PolymarketSyncMarketsCommand extends Command
             return self::SUCCESS;
         }
 
-        $lockKey = sprintf('polymarket:sync-markets:inline:%d:%d', $limit, $maxPages);
-        $result = Cache::lock($lockKey, $lockSeconds)->get(function () use ($gammaService, $limit, $maxPages) {
+        $lockKey = sprintf('polymarket:sync-markets:inline:%s:%d:%d', $watchedOnly ? 'watched' : 'all', $limit, $maxPages);
+        $result = Cache::lock($lockKey, $lockSeconds)->get(function () use ($gammaService, $limit, $maxPages, $watchedOnly) {
             Log::info('Polymarket market sync started from artisan command', [
+                'watched_only' => $watchedOnly,
                 'page_size' => $limit,
                 'max_pages' => $maxPages,
             ]);
 
-            return $gammaService->syncActiveMarkets($limit, $maxPages);
+            return $gammaService->syncActiveMarkets($limit, $maxPages, $watchedOnly);
         });
 
         if ($result === false) {
@@ -62,6 +69,7 @@ class PolymarketSyncMarketsCommand extends Command
             ));
 
             Log::warning('Polymarket market sync skipped because another run still holds the lock', [
+                'watched_only' => $watchedOnly,
                 'page_size' => $limit,
                 'max_pages' => $maxPages,
             ]);
@@ -70,7 +78,8 @@ class PolymarketSyncMarketsCommand extends Command
         }
 
         $this->info(sprintf(
-            'Sync markets selesai. inserted=%d updated=%d tokens_upserted=%d pages=%d',
+            'Sync markets selesai. scope=%s inserted=%d updated=%d tokens_upserted=%d pages=%d',
+            $watchedOnly ? 'watched-only' : 'all',
             $result['inserted'],
             $result['updated'],
             $result['tokens_upserted'],

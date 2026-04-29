@@ -8,6 +8,7 @@ Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 Route::get('/positions', [DashboardController::class, 'positions'])->name('positions');
 Route::get('/signals', [DashboardController::class, 'signals'])->name('signals');
 Route::get('/wallets', [DashboardController::class, 'wallets'])->name('wallets');
+Route::get('/markers', [DashboardController::class, 'markers'])->name('markers');
 Route::post('/wallets', [DashboardController::class, 'storeWallet'])->name('wallets.store');
 Route::put('/wallets/{wallet}', [DashboardController::class, 'updateWallet'])->name('wallets.update');
 Route::post('/wallets/{wallet}/refresh', [DashboardController::class, 'refreshWallet'])->name('wallets.refresh');

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ExecutionLog;
+use App\Models\Market;
 use App\Models\PolymarketAccount;
 use App\Models\Position;
 use App\Models\Signal;
@@ -133,6 +134,80 @@ class DashboardController extends Controller
         return view('dashboard.wallets', [
             'pageTitle' => 'Tracked Wallets',
             'wallets' => Wallet::query()->latest('last_active')->paginate(20),
+        ]);
+    }
+
+    public function markers(): View
+    {
+        $markerRows = WalletTrade::query()
+            ->select('condition_id', DB::raw('MAX(traded_at) as last_traded_at'))
+            ->whereNotNull('condition_id')
+            ->where('condition_id', '!=', '')
+            ->groupBy('condition_id')
+            ->orderByDesc('last_traded_at')
+            ->paginate(20)
+            ->withQueryString();
+
+        $conditionIds = $markerRows->getCollection()
+            ->pluck('condition_id')
+            ->filter()
+            ->values();
+
+        $marketsByCondition = Market::query()
+            ->whereIn('condition_id', $conditionIds)
+            ->get()
+            ->keyBy('condition_id');
+
+        $walletAggregateByCondition = WalletTrade::query()
+            ->join('wallets', 'wallets.id', '=', 'wallet_trades.wallet_id')
+            ->whereIn('wallet_trades.condition_id', $conditionIds)
+            ->select([
+                'wallet_trades.condition_id',
+                DB::raw("GROUP_CONCAT(DISTINCT CASE WHEN wallets.name != '' THEN wallets.name ELSE wallets.address END) AS wallet_names"),
+                DB::raw('COUNT(DISTINCT wallet_trades.wallet_id) AS wallet_count'),
+            ])
+            ->groupBy('wallet_trades.condition_id')
+            ->get()
+            ->keyBy('condition_id');
+
+        $markerRows->setCollection(
+            $markerRows->getCollection()->map(function (WalletTrade $walletTrade) use ($marketsByCondition, $walletAggregateByCondition): array {
+                $market = $marketsByCondition->get($walletTrade->condition_id);
+                $marketPayload = $market?->raw_payload ?? [];
+                $walletAggregate = $walletAggregateByCondition->get($walletTrade->condition_id);
+                $walletNames = collect(explode(',', (string) ($walletAggregate->wallet_names ?? '')))
+                    ->map(fn (string $name): string => trim($name))
+                    ->filter()
+                    ->values();
+                $eventSlug = (string) ($market->slug ?? '');
+                $category = $this->extractMarketCategory($marketPayload);
+                $timeRemaining = $market?->end_date !== null
+                    ? ($market->end_date->isPast() ? 'Sudah selesai' : $market->end_date->diffForHumans(now(), [
+                        'syntax' => Carbon::DIFF_RELATIVE_TO_NOW,
+                        'parts' => 2,
+                    ]))
+                    : '-';
+
+                return [
+                    'condition_id' => $walletTrade->condition_id,
+                    'title' => (string) ($market?->question ?? 'Market tanpa judul'),
+                    'category' => $category,
+                    'wallet_names' => $walletNames->join(', '),
+                    'wallet_count' => (int) ($walletAggregate->wallet_count ?? 0),
+                    'market_url' => $eventSlug !== '' ? 'https://polymarket.com/event/'.$eventSlug : null,
+                    'detail' => [
+                        'volume' => $this->extractMarketVolume($marketPayload),
+                        'time_remaining' => $timeRemaining,
+                        'rules' => $this->extractMarketRules($marketPayload, $market?->description),
+                        'context' => $this->extractMarketContext($marketPayload),
+                    ],
+                ];
+            })
+        );
+
+        return view('dashboard.markers', [
+            'pageTitle' => 'Marker',
+            'markers' => $markerRows,
         ]);
     }
 
@@ -522,5 +597,55 @@ class DashboardController extends Controller
         }
 
         return $highlights;
+    }
+
+    private function extractMarketCategory(array $marketPayload): string
+    {
+        $category = data_get($marketPayload, 'category')
+            ?? data_get($marketPayload, 'groupItemTitle')
+            ?? data_get($marketPayload, 'questionCategory')
+            ?? data_get($marketPayload, 'event.title')
+            ?? '-';
+
+        return trim((string) $category) !== '' ? (string) $category : '-';
+    }
+
+    private function extractMarketVolume(array $marketPayload): string
+    {
+        $volume = data_get($marketPayload, 'volume')
+            ?? data_get($marketPayload, 'volumeNum')
+            ?? data_get($marketPayload, 'volume24hr')
+            ?? data_get($marketPayload, 'liquidityNum');
+
+        if ($volume === null || $volume === '') {
+            return '-';
+        }
+
+        if (is_numeric($volume)) {
+            return '$'.number_format((float) $volume, 2);
+        }
+
+        return (string) $volume;
+    }
+
+    private function extractMarketRules(array $marketPayload, ?string $description): string
+    {
+        $rules = data_get($marketPayload, 'rules')
+            ?? data_get($marketPayload, 'marketRules')
+            ?? $description
+            ?? '-';
+
+        return Str::limit(trim((string) $rules), 320, '...');
+    }
+
+    private function extractMarketContext(array $marketPayload): string
+    {
+        $context = data_get($marketPayload, 'context')
+            ?? data_get($marketPayload, 'description')
+            ?? data_get($marketPayload, 'event.description')
+            ?? data_get($marketPayload, 'event.title')
+            ?? '-';
+
+        return Str::limit(trim((string) $context), 320, '...');
     }
 }

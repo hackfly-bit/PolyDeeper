@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('wallet_trades', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('wallet_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('wallet_id')->index();
             $table->string('market_id')->index();
             $table->string('side'); // YES or NO
             $table->decimal('price', 8, 4);

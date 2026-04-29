@@ -21,12 +21,13 @@ class SyncMarketsJob implements ShouldQueue, ShouldBeUnique
 
     public function __construct(
         public int $pageSize = 100,
-        public int $maxPages = 10
+        public int $maxPages = 10,
+        public bool $watchedOnly = true
     ) {}
 
     public function uniqueId(): string
     {
-        return sprintf('markets:%d:%d', $this->pageSize, $this->maxPages);
+        return sprintf('markets:%s:%d:%d', $this->watchedOnly ? 'watched' : 'all', $this->pageSize, $this->maxPages);
     }
 
     /**
@@ -35,13 +36,15 @@ class SyncMarketsJob implements ShouldQueue, ShouldBeUnique
     public function handle(PolymarketGammaService $gammaService): void
     {
         Log::info('Polymarket market sync started', [
+            'watched_only' => $this->watchedOnly,
             'page_size' => $this->pageSize,
             'max_pages' => $this->maxPages,
         ]);
 
-        $result = $gammaService->syncActiveMarkets($this->pageSize, $this->maxPages);
+        $result = $gammaService->syncActiveMarkets($this->pageSize, $this->maxPages, $this->watchedOnly);
 
         Log::info('Polymarket market sync completed', [
+            'watched_only' => $this->watchedOnly,
             'page_size' => $this->pageSize,
             'max_pages' => $this->maxPages,
             'inserted' => $result['inserted'],
@@ -54,6 +57,7 @@ class SyncMarketsJob implements ShouldQueue, ShouldBeUnique
     public function failed(Throwable $exception): void
     {
         Log::error('Polymarket market sync failed', [
+            'watched_only' => $this->watchedOnly,
             'page_size' => $this->pageSize,
             'max_pages' => $this->maxPages,
             'message' => $exception->getMessage(),

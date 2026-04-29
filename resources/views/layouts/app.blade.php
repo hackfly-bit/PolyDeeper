@@ -62,6 +62,10 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path></svg>
                     Tracked Wallets
                 </a>
+                <a href="{{ route('markers') }}" class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors {{ request()->routeIs('markers') ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/20 dark:text-brand-400' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-border' }}">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8m-8 4h8m-8 4h5M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"></path></svg>
+                    Marker
+                </a>
                 <a href="{{ route('settings') }}" class="flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors {{ request()->routeIs('settings') ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/20 dark:text-brand-400' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-border' }}">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a2.25 2.25 0 00-2.12 1.5l-.2.6a1.5 1.5 0 01-.95.95l-.6.2a2.25 2.25 0 00-1.5 2.12v.26c0 .95.57 1.8 1.44 2.16l.55.22c.44.17.78.51.95.95l.2.6a2.25 2.25 0 002.12 1.5h.26c.95 0 1.8-.57 2.16-1.44l.22-.55c.17-.44.51-.78.95-.95l.6-.2a2.25 2.25 0 001.5-2.12v-.26a2.25 2.25 0 00-1.5-2.12l-.6-.2a1.5 1.5 0 01-.95-.95l-.2-.6A2.25 2.25 0 0010.01 3h-.26z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z"></path></svg>
                     Settings

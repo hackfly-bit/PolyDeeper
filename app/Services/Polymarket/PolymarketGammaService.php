@@ -4,8 +4,10 @@ namespace App\Services\Polymarket;
 
 use App\Models\Market;
 use App\Models\MarketToken;
+use App\Models\WalletTrade;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 
 class PolymarketGammaService
@@ -36,12 +38,37 @@ class PolymarketGammaService
     /**
      * @return array{inserted:int,updated:int,tokens_upserted:int,pages:int}
      */
-    public function syncActiveMarkets(int $pageSize = 100, int $maxPages = 10): array
+    public function syncActiveMarkets(int $pageSize = 100, int $maxPages = 10, bool $watchedOnly = true): array
     {
         $inserted = 0;
         $updated = 0;
         $tokensUpserted = 0;
         $pagesProcessed = 0;
+
+        if ($watchedOnly) {
+            $watchedConditionIds = $this->watchedConditionIds($pageSize * $maxPages);
+
+            foreach ($watchedConditionIds as $conditionId) {
+                $marketPayload = $this->fetchActiveMarketByConditionId($conditionId);
+                $pagesProcessed++;
+
+                if (! is_array($marketPayload)) {
+                    continue;
+                }
+
+                $persistResult = $this->persistMarketPayload($marketPayload);
+                $inserted += $persistResult['inserted'];
+                $updated += $persistResult['updated'];
+                $tokensUpserted += $persistResult['tokens_upserted'];
+            }
+
+            return [
+                'inserted' => $inserted,
+                'updated' => $updated,
+                'tokens_upserted' => $tokensUpserted,
+                'pages' => $pagesProcessed,
+            ];
+        }
 
         for ($page = 0; $page < $maxPages; $page++) {
             $offset = $page * $pageSize;
@@ -58,37 +85,10 @@ class PolymarketGammaService
                     continue;
                 }
 
-                $conditionId = (string) ($marketPayload['conditionId'] ?? $marketPayload['condition_id'] ?? '');
-                if ($conditionId === '') {
-                    continue;
-                }
-
-                $attributes = [
-                    'slug' => $marketPayload['slug'] ?? null,
-                    'question' => $marketPayload['question'] ?? null,
-                    'description' => $marketPayload['description'] ?? null,
-                    'active' => (bool) ($marketPayload['active'] ?? true),
-                    'closed' => (bool) ($marketPayload['closed'] ?? false),
-                    'end_date' => $this->parseDate($marketPayload['endDateIso'] ?? $marketPayload['end_date_iso'] ?? null),
-                    'minimum_tick_size' => $this->toFloat($marketPayload['minimum_tick_size'] ?? null),
-                    'neg_risk' => (bool) ($marketPayload['neg_risk'] ?? false),
-                    'raw_payload' => $marketPayload,
-                    'last_synced_at' => now(),
-                ];
-
-                $existing = Market::query()->where('condition_id', $conditionId)->first();
-                $market = Market::query()->updateOrCreate(
-                    ['condition_id' => $conditionId],
-                    $attributes
-                );
-
-                if ($existing === null) {
-                    $inserted++;
-                } else {
-                    $updated++;
-                }
-
-                $tokensUpserted += $this->syncMarketTokens($market, $marketPayload);
+                $persistResult = $this->persistMarketPayload($marketPayload);
+                $inserted += $persistResult['inserted'];
+                $updated += $persistResult['updated'];
+                $tokensUpserted += $persistResult['tokens_upserted'];
             }
 
             if (count($markets) < $pageSize) {
@@ -102,6 +102,91 @@ class PolymarketGammaService
             'tokens_upserted' => $tokensUpserted,
             'pages' => $pagesProcessed,
         ];
+    }
+
+    /**
+     * @return array{inserted:int,updated:int,tokens_upserted:int}
+     */
+    private function persistMarketPayload(array $marketPayload): array
+    {
+        $conditionId = (string) ($marketPayload['conditionId'] ?? $marketPayload['condition_id'] ?? '');
+        if ($conditionId === '') {
+            return [
+                'inserted' => 0,
+                'updated' => 0,
+                'tokens_upserted' => 0,
+            ];
+        }
+
+        $attributes = [
+            'slug' => $marketPayload['slug'] ?? null,
+            'question' => $marketPayload['question'] ?? null,
+            'description' => $marketPayload['description'] ?? null,
+            'active' => (bool) ($marketPayload['active'] ?? true),
+            'closed' => (bool) ($marketPayload['closed'] ?? false),
+            'end_date' => $this->parseDate($marketPayload['endDateIso'] ?? $marketPayload['end_date_iso'] ?? null),
+            'minimum_tick_size' => $this->toFloat($marketPayload['minimum_tick_size'] ?? null),
+            'neg_risk' => (bool) ($marketPayload['neg_risk'] ?? false),
+            'raw_payload' => $marketPayload,
+            'last_synced_at' => now(),
+        ];
+
+        $existing = Market::query()->where('condition_id', $conditionId)->exists();
+        $market = Market::query()->updateOrCreate(
+            ['condition_id' => $conditionId],
+            $attributes
+        );
+
+        return [
+            'inserted' => $existing ? 0 : 1,
+            'updated' => $existing ? 1 : 0,
+            'tokens_upserted' => $this->syncMarketTokens($market, $marketPayload),
+        ];
+    }
+
+    private function fetchActiveMarketByConditionId(string $conditionId): ?array
+    {
+        $response = Http::baseUrl($this->gammaHost())
+            ->timeout((int) config('services.polymarket.timeout_seconds', 15))
+            ->acceptJson()
+            ->withOptions([
+                'verify' => false,
+            ])
+            ->retry(2, 300)
+            ->get('/markets', [
+                'active' => 'true',
+                'closed' => 'false',
+                'condition_id' => $conditionId,
+                'limit' => 1,
+                'offset' => 0,
+            ]);
+
+        $response->throw();
+
+        $payload = $response->json();
+        $markets = is_array($payload) ? $payload : [];
+
+        if (count($markets) === 0) {
+            return null;
+        }
+
+        $firstMarket = $markets[0] ?? null;
+
+        return is_array($firstMarket) ? $firstMarket : null;
+    }
+
+    /**
+     * @return Collection<int, string>
+     */
+    private function watchedConditionIds(int $limit): Collection
+    {
+        return WalletTrade::query()
+            ->whereNotNull('condition_id')
+            ->where('condition_id', '!=', '')
+            ->distinct()
+            ->orderByDesc('traded_at')
+            ->limit(max(1, $limit))
+            ->pluck('condition_id');
     }
 
     private function gammaHost(): string

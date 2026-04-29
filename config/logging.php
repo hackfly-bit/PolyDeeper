@@ -73,6 +73,14 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'polymarket-listener' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/polymarket-listener.log'),
+            'level' => env('POLYMARKET_LISTENER_LOG_LEVEL', env('LOG_LEVEL', 'info')),
+            'days' => env('POLYMARKET_LISTENER_LOG_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),
