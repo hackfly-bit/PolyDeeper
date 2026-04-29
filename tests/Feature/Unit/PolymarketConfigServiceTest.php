@@ -61,6 +61,12 @@ class PolymarketConfigServiceTest extends TestCase
             'risk_profile' => 'aggressive',
             'max_exposure_usd' => 2500.50,
             'max_order_size' => 25.75,
+            'max_open_positions' => 5,
+            'max_open_positions_per_market' => 2,
+            'max_order_size_in_usd' => 100.25,
+            'daily_limit_mode' => 'usd',
+            'max_daily_loss_position' => 150,
+            'max_daily_win_position' => 300,
             'cooldown_seconds' => 30,
         ]);
 
@@ -70,6 +76,12 @@ class PolymarketConfigServiceTest extends TestCase
         $this->assertSame('POLY_SIGNER_ALPHA_V2', $updated->env_key_name);
         $this->assertSame(10, $updated->priority);
         $this->assertSame('aggressive', $updated->risk_profile);
+        $this->assertSame(5, $updated->max_open_positions);
+        $this->assertSame(2, $updated->max_open_positions_per_market);
+        $this->assertSame(100.25, $updated->max_order_size_in_usd);
+        $this->assertSame('usd', $updated->daily_limit_mode);
+        $this->assertSame(150.0, $updated->max_daily_loss_position);
+        $this->assertSame(300.0, $updated->max_daily_win_position);
         $this->assertSame(30, $updated->cooldown_seconds);
     }
 }

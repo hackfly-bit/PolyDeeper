@@ -23,6 +23,12 @@
         </button>
     </div>
 
+    @if (session('dashboard_success'))
+        <div class="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-900/30 dark:bg-green-900/20 dark:text-green-300">
+            {{ session('dashboard_success') }}
+        </div>
+    @endif
+
     @livewire(\App\Livewire\Dashboard\OverviewStats::class, [], key('overview-stats'))
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">

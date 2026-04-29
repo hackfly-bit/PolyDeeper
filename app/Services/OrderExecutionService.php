@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Market;
 use App\Models\Order;
+use App\Models\Position;
 use App\Models\PolymarketAccount;
 use App\Services\Polymarket\PolymarketAccountAuditService;
 use App\Services\Polymarket\PolymarketAccountOrchestratorService;
@@ -64,6 +65,26 @@ class OrderExecutionService
                 'error' => 'Order melebihi batas max_order_size account.',
             ];
         }
+        $orderNotionalUsd = $size * $price;
+        if (
+            $account->max_order_size_in_usd !== null
+            && $account->max_order_size_in_usd > 0
+            && $orderNotionalUsd > $account->max_order_size_in_usd
+        ) {
+            return [
+                'success' => false,
+                'error' => 'Order melebihi batas max_order_size_in_usd account.',
+            ];
+        }
+        if ($account->max_open_positions !== null && $account->max_open_positions > 0) {
+            $openPositions = $this->countOpenPositionsForAccount((int) $account->id);
+            if ($openPositions >= $account->max_open_positions) {
+                return [
+                    'success' => false,
+                    'error' => 'Order ditolak karena jumlah open position sudah mencapai batas account.',
+                ];
+            }
+        }
         if ($account->wallet_address === null || trim($account->wallet_address) === '') {
             return [
                 'success' => false,
@@ -82,6 +103,60 @@ class OrderExecutionService
 
         $market = $this->resolveMarket($marketId, $context['condition_id'] ?? null, $context['token_id'] ?? null);
         $conditionId = $market?->condition_id ?? ($context['condition_id'] ?? null) ?? $marketId;
+        if ($account->max_open_positions_per_market !== null && $account->max_open_positions_per_market > 0) {
+            $openPositionsPerMarket = $this->countOpenPositionsPerMarketForAccount((int) $account->id, (string) $conditionId);
+            if ($openPositionsPerMarket >= $account->max_open_positions_per_market) {
+                return [
+                    'success' => false,
+                    'error' => 'Order ditolak karena open position untuk market ini sudah mencapai batas account.',
+                ];
+            }
+        }
+        $dailyOutcome = $this->dailyOutcomeForAccount((int) $account->id);
+        $dailyLimitMode = strtolower((string) ($account->daily_limit_mode ?? 'count'));
+        if ($dailyLimitMode === 'usd') {
+            if (
+                $account->max_daily_loss_position !== null
+                && $account->max_daily_loss_position > 0
+                && $dailyOutcome['loss_usd'] >= $account->max_daily_loss_position
+            ) {
+                return [
+                    'success' => false,
+                    'error' => 'Order ditolak karena limit harian loss (USD) account sudah tercapai.',
+                ];
+            }
+            if (
+                $account->max_daily_win_position !== null
+                && $account->max_daily_win_position > 0
+                && $dailyOutcome['win_usd'] >= $account->max_daily_win_position
+            ) {
+                return [
+                    'success' => false,
+                    'error' => 'Order ditolak karena limit harian win (USD) account sudah tercapai.',
+                ];
+            }
+        } else {
+            if (
+                $account->max_daily_loss_position !== null
+                && $account->max_daily_loss_position > 0
+                && $dailyOutcome['loss_count'] >= $account->max_daily_loss_position
+            ) {
+                return [
+                    'success' => false,
+                    'error' => 'Order ditolak karena limit harian jumlah posisi loss account sudah tercapai.',
+                ];
+            }
+            if (
+                $account->max_daily_win_position !== null
+                && $account->max_daily_win_position > 0
+                && $dailyOutcome['win_count'] >= $account->max_daily_win_position
+            ) {
+                return [
+                    'success' => false,
+                    'error' => 'Order ditolak karena limit harian jumlah posisi win account sudah tercapai.',
+                ];
+            }
+        }
         $tokenId = $context['token_id'] ?? null;
         if ($tokenId === null && $market !== null) {
             $tokenId = $market->tokens()
@@ -223,6 +298,64 @@ class OrderExecutionService
         }
 
         return $this->accountOrchestratorService->pickActiveAccount();
+    }
+
+    private function countOpenPositionsForAccount(int $accountId): int
+    {
+        return Position::query()
+            ->join('orders', 'orders.id', '=', 'positions.order_id')
+            ->where('orders.polymarket_account_id', $accountId)
+            ->where('positions.status', 'open')
+            ->count();
+    }
+
+    private function countOpenPositionsPerMarketForAccount(int $accountId, string $conditionId): int
+    {
+        return Position::query()
+            ->join('orders', 'orders.id', '=', 'positions.order_id')
+            ->where('orders.polymarket_account_id', $accountId)
+            ->where('positions.status', 'open')
+            ->where('positions.condition_id', $conditionId)
+            ->count();
+    }
+
+    /**
+     * @return array{
+     *     loss_count:int,
+     *     win_count:int,
+     *     loss_usd:float,
+     *     win_usd:float
+     * }
+     */
+    private function dailyOutcomeForAccount(int $accountId): array
+    {
+        $jakartaNow = now('Asia/Jakarta');
+        $startUtc = $jakartaNow->copy()->startOfDay()->utc();
+        $endUtc = $jakartaNow->copy()->endOfDay()->utc();
+
+        $baseQuery = Position::query()
+            ->join('orders', 'orders.id', '=', 'positions.order_id')
+            ->where('orders.polymarket_account_id', $accountId)
+            ->whereNotNull('positions.closed_at')
+            ->whereBetween('positions.closed_at', [$startUtc, $endUtc]);
+
+        $lossCount = (clone $baseQuery)->where('positions.outcome', 'loss')->count();
+        $winCount = (clone $baseQuery)->where('positions.outcome', 'win')->count();
+        $lossUsd = (float) ((clone $baseQuery)
+            ->where('positions.outcome', 'loss')
+            ->selectRaw('COALESCE(SUM(ABS(closed_pnl_usd)), 0) as total_loss')
+            ->value('total_loss'));
+        $winUsd = (float) ((clone $baseQuery)
+            ->where('positions.outcome', 'win')
+            ->selectRaw('COALESCE(SUM(closed_pnl_usd), 0) as total_win')
+            ->value('total_win'));
+
+        return [
+            'loss_count' => (int) $lossCount,
+            'win_count' => (int) $winCount,
+            'loss_usd' => max(0.0, $lossUsd),
+            'win_usd' => max(0.0, $winUsd),
+        ];
     }
 
     /**

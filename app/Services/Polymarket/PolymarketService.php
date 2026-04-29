@@ -109,6 +109,62 @@ class PolymarketService
         ];
     }
 
+    /**
+     * @return array{
+     *     ok:bool,
+     *     status:int,
+     *     balance_usd:?float,
+     *     body:array,
+     *     error:?string
+     * }
+     */
+    public function fetchBalance(PolymarketAccount $account): array
+    {
+        $candidates = [
+            [
+                'uri' => '/balance-allowance',
+                'query' => ['asset_type' => 'COLLATERAL'],
+            ],
+            [
+                'uri' => '/data/balance',
+                'query' => [],
+            ],
+        ];
+
+        foreach ($candidates as $candidate) {
+            $requestPath = $candidate['uri'];
+            if ($candidate['query'] !== []) {
+                $requestPath .= '?'.Arr::query($candidate['query']);
+            }
+
+            $response = $this->request()
+                ->withHeaders($this->authService->buildL2HeadersForAccount($account, 'GET', $requestPath))
+                ->get($candidate['uri'], $candidate['query']);
+            $this->recordRuntimeSignals($response, $account);
+
+            $body = (array) ($response->json() ?? []);
+            $balance = $this->extractBalanceUsd($body);
+
+            if ($response->successful() && $balance !== null) {
+                return [
+                    'ok' => true,
+                    'status' => $response->status(),
+                    'balance_usd' => $balance,
+                    'body' => $body,
+                    'error' => null,
+                ];
+            }
+        }
+
+        return [
+            'ok' => false,
+            'status' => 0,
+            'balance_usd' => null,
+            'body' => [],
+            'error' => 'Endpoint saldo tidak mengembalikan nilai yang bisa dipakai.',
+        ];
+    }
+
     public function triggerRateLimitMetric(PolymarketAccount $account): void
     {
         $cacheKey = sprintf('polymarket:rate-limit:%d:%d', $account->id, now()->minute);
@@ -185,5 +241,38 @@ class PolymarketService
         }
 
         return (bool) config('services.polymarket.tls_verify', true);
+    }
+
+    private function extractBalanceUsd(array $body): ?float
+    {
+        $directKeys = [
+            'balance',
+            'available_balance',
+            'availableBalance',
+            'total_balance',
+            'totalBalance',
+            'value',
+            'amount',
+            'usdc',
+            'balance_usd',
+        ];
+
+        foreach ($directKeys as $key) {
+            $value = $body[$key] ?? null;
+            if (is_numeric($value)) {
+                return (float) $value;
+            }
+        }
+
+        foreach ($body as $value) {
+            if (is_array($value)) {
+                $nested = $this->extractBalanceUsd($value);
+                if ($nested !== null) {
+                    return $nested;
+                }
+            }
+        }
+
+        return null;
     }
 }

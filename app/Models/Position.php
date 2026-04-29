@@ -18,6 +18,8 @@ class Position extends Model
         'size',
         'status',
         'closed_at',
+        'closed_pnl_usd',
+        'outcome',
         'exit_reason',
     ];
 
@@ -25,6 +27,7 @@ class Position extends Model
         'entry_price' => 'float',
         'size' => 'float',
         'closed_at' => 'datetime',
+        'closed_pnl_usd' => 'float',
     ];
 
     public function market(): BelongsTo

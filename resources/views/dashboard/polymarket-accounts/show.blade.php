@@ -92,6 +92,38 @@
                 <input name="max_order_size" type="number" step="0.000001" min="0" value="{{ old('max_order_size', $account->max_order_size) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
             <div>
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Open Positions</label>
+                <input name="max_open_positions" type="number" min="0" value="{{ old('max_open_positions', $account->max_open_positions ?? 0) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">0 = tanpa limit</p>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Open Positions Per Market</label>
+                <input name="max_open_positions_per_market" type="number" min="0" value="{{ old('max_open_positions_per_market', $account->max_open_positions_per_market ?? 0) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">0 = tanpa limit</p>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Order Size (USD)</label>
+                <input name="max_order_size_in_usd" type="number" step="0.01" min="0" value="{{ old('max_order_size_in_usd', $account->max_order_size_in_usd ?? 0) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">0 = tanpa limit</p>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Daily Limit Mode</label>
+                <select name="daily_limit_mode" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+                    <option value="count" @selected(old('daily_limit_mode', $account->daily_limit_mode ?? 'count') === 'count')>Count (Jumlah Posisi)</option>
+                    <option value="usd" @selected(old('daily_limit_mode', $account->daily_limit_mode ?? 'count') === 'usd')>USD (Nominal Harian)</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Daily Loss Position</label>
+                <input name="max_daily_loss_position" type="number" step="0.01" min="0" value="{{ old('max_daily_loss_position', $account->max_daily_loss_position ?? 0) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Diinterpretasi sesuai Daily Limit Mode. 0 = tanpa limit</p>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Max Daily Win Position</label>
+                <input name="max_daily_win_position" type="number" step="0.01" min="0" value="{{ old('max_daily_win_position', $account->max_daily_win_position ?? 0) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Diinterpretasi sesuai Daily Limit Mode. 0 = tanpa limit</p>
+            </div>
+            <div>
                 <label class="text-xs font-semibold text-gray-600 dark:text-gray-300">Cooldown (detik)</label>
                 <input name="cooldown_seconds" type="number" min="0" max="3600" value="{{ old('cooldown_seconds', $account->cooldown_seconds) }}" class="mt-1 w-full rounded-xl border-gray-200 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
             </div>
@@ -118,6 +150,8 @@
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Last validation: {{ $account->last_validated_at?->toDateTimeString() ?? '-' }}</p>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Last error: {{ $account->last_error_code ?? '-' }}</p>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">API Key: {{ $account->api_key ? substr($account->api_key, 0, 3).'****'.substr($account->api_key, -4) : '-' }}</p>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Saldo Tersimpan: ${{ number_format((float) ($account->last_balance_usd ?? 0), 2) }}</p>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Saldo Last Refresh: {{ $account->last_balance_refreshed_at?->timezone('Asia/Jakarta')->format('Y-m-d H:i:s') ?? '-' }} WIB</p>
 
         <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
             <div class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
@@ -142,6 +176,10 @@
             <form method="POST" action="{{ route('settings.polymarket.accounts.validate', $account) }}">
                 @csrf
                 <button type="submit" class="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 dark:border-gray-700 dark:text-gray-200">Validate Dan Sync Credential</button>
+            </form>
+            <form method="POST" action="{{ route('settings.polymarket.accounts.refresh-balance', $account) }}">
+                @csrf
+                <button type="submit" class="rounded-xl border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 dark:border-blue-900/40 dark:text-blue-300">Refresh Saldo</button>
             </form>
             <form method="POST" action="{{ route('settings.polymarket.accounts.rotate', $account) }}">
                 @csrf

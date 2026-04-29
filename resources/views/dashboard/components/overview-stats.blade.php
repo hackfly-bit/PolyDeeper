@@ -14,14 +14,25 @@
                 @endif
             </p>
         </div>
-        <button
-            type="button"
-            wire:click="refresh"
-            wire:loading.attr="disabled"
-            class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-border dark:bg-dark-surface dark:text-gray-200 dark:hover:border-brand-500/40 dark:hover:text-brand-300"
-        >
-            Reload Card
-        </button>
+        <div class="flex flex-wrap items-center gap-2">
+            <form method="POST" action="{{ route('settings.polymarket.accounts.refresh-balances') }}">
+                @csrf
+                <button
+                    type="submit"
+                    class="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:text-blue-800 dark:border-blue-900/50 dark:bg-dark-surface dark:text-blue-300 dark:hover:border-blue-700"
+                >
+                    Refresh Saldo Account
+                </button>
+            </form>
+            <button
+                type="button"
+                wire:click="refresh"
+                wire:loading.attr="disabled"
+                class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-border dark:bg-dark-surface dark:text-gray-200 dark:hover:border-brand-500/40 dark:hover:text-brand-300"
+            >
+                Reload Card
+            </button>
+        </div>
     </div>
 
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -74,6 +85,20 @@
             <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
                 Pending: {{ number_format($stats['queue_backlog'] ?? 0) }} | Failed: {{ number_format($stats['failed_jobs'] ?? 0) }}
             </p>
+        </div>
+
+        <div class="card p-5">
+            <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Stored Balance (USD)</p>
+            <h3 class="mt-2 text-2xl font-extrabold text-gray-900 dark:text-white font-mono">${{ number_format((float) ($stats['stored_balance_total_usd'] ?? 0), 2) }}</h3>
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Total saldo tersimpan account aktif: {{ number_format((int) ($stats['active_account_count'] ?? 0)) }} account</p>
+        </div>
+
+        <div class="card p-5">
+            <p class="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Balance Last Refresh</p>
+            <h3 class="mt-2 text-lg font-extrabold text-gray-900 dark:text-white font-mono">
+                {{ !empty($stats['stored_balance_latest_refresh']) ? \Illuminate\Support\Carbon::parse($stats['stored_balance_latest_refresh'])->timezone('Asia/Jakarta')->format('Y-m-d H:i:s') : '-' }}
+            </h3>
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Zona waktu: WIB (Asia/Jakarta)</p>
         </div>
     </div>
 </div>

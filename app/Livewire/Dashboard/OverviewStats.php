@@ -3,6 +3,7 @@
 namespace App\Livewire\Dashboard;
 
 use App\Models\Position;
+use App\Models\PolymarketAccount;
 use App\Models\Signal;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\Config;
@@ -31,6 +32,7 @@ class OverviewStats extends Component
         $now = now();
         $oneHourAgo = $now->copy()->subHour();
         $openPositionsQuery = Position::query()->where('status', 'open');
+        $accountsQuery = PolymarketAccount::query()->where('is_active', true);
 
         $this->stats = [
             'tracked_wallets' => Wallet::count(),
@@ -43,6 +45,11 @@ class OverviewStats extends Component
                 ->value('total_exposure'),
             'queue_backlog' => DB::table('jobs')->count(),
             'failed_jobs' => DB::table('failed_jobs')->count(),
+            'active_account_count' => (clone $accountsQuery)->count(),
+            'stored_balance_total_usd' => (float) (clone $accountsQuery)
+                ->selectRaw('COALESCE(SUM(last_balance_usd), 0) as total_balance')
+                ->value('total_balance'),
+            'stored_balance_latest_refresh' => (clone $accountsQuery)->max('last_balance_refreshed_at'),
         ];
 
         $this->runtime = $this->runtimeStatus();

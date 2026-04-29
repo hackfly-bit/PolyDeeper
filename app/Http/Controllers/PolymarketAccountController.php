@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\PolymarketAccount;
 use App\Services\Polymarket\PolymarketAccountService;
 use App\Services\Polymarket\PolymarketCredentialService;
+use App\Services\Polymarket\PolymarketService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -44,6 +45,12 @@ class PolymarketAccountController extends Controller
             'risk_profile' => ['nullable', 'string', 'in:conservative,standard,aggressive'],
             'max_exposure_usd' => ['nullable', 'numeric', 'min:0'],
             'max_order_size' => ['nullable', 'numeric', 'min:0'],
+            'max_open_positions' => ['nullable', 'integer', 'min:0'],
+            'max_open_positions_per_market' => ['nullable', 'integer', 'min:0'],
+            'max_order_size_in_usd' => ['nullable', 'numeric', 'min:0'],
+            'daily_limit_mode' => ['nullable', 'string', 'in:count,usd'],
+            'max_daily_loss_position' => ['nullable', 'numeric', 'min:0'],
+            'max_daily_win_position' => ['nullable', 'numeric', 'min:0'],
             'cooldown_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
         ]);
 
@@ -67,6 +74,12 @@ class PolymarketAccountController extends Controller
             'risk_profile' => ['nullable', 'string', 'in:conservative,standard,aggressive'],
             'max_exposure_usd' => ['nullable', 'numeric', 'min:0'],
             'max_order_size' => ['nullable', 'numeric', 'min:0'],
+            'max_open_positions' => ['nullable', 'integer', 'min:0'],
+            'max_open_positions_per_market' => ['nullable', 'integer', 'min:0'],
+            'max_order_size_in_usd' => ['nullable', 'numeric', 'min:0'],
+            'daily_limit_mode' => ['nullable', 'string', 'in:count,usd'],
+            'max_daily_loss_position' => ['nullable', 'numeric', 'min:0'],
+            'max_daily_win_position' => ['nullable', 'numeric', 'min:0'],
             'cooldown_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
         ]);
 
@@ -130,6 +143,68 @@ class PolymarketAccountController extends Controller
             ->with('account_success', 'Trading untuk account ini diaktifkan.');
     }
 
+    public function refreshBalance(
+        PolymarketAccount $account,
+        PolymarketService $polymarketService,
+        PolymarketAccountService $accountService
+    ): RedirectResponse {
+        try {
+            $result = $polymarketService->fetchBalance($account);
+        } catch (RuntimeException $exception) {
+            return redirect()
+                ->route('settings.polymarket.accounts.show', $account)
+                ->with('account_error', $exception->getMessage());
+        }
+
+        if (! ($result['ok'] ?? false)) {
+            return redirect()
+                ->route('settings.polymarket.accounts.show', $account)
+                ->with('account_error', $result['error'] ?? 'Gagal mengambil saldo account.');
+        }
+
+        $updatedAccount = $accountService->refreshStoredBalance($account, (float) ($result['balance_usd'] ?? 0));
+
+        return redirect()
+            ->route('settings.polymarket.accounts.show', $updatedAccount)
+            ->with('account_success', 'Saldo account berhasil diperbarui.');
+    }
+
+    public function refreshAllBalances(
+        PolymarketService $polymarketService,
+        PolymarketAccountService $accountService
+    ): RedirectResponse {
+        $accounts = PolymarketAccount::query()
+            ->where('is_active', true)
+            ->whereIn('credential_status', ['active', 'needs_rotation'])
+            ->get();
+
+        $refreshedCount = 0;
+        $failedCount = 0;
+
+        foreach ($accounts as $account) {
+            try {
+                $result = $polymarketService->fetchBalance($account);
+                if (! ($result['ok'] ?? false)) {
+                    $failedCount++;
+
+                    continue;
+                }
+
+                $accountService->refreshStoredBalance($account, (float) ($result['balance_usd'] ?? 0));
+                $refreshedCount++;
+            } catch (RuntimeException $exception) {
+                $failedCount++;
+            }
+        }
+
+        return redirect()
+            ->route('dashboard')
+            ->with(
+                'dashboard_success',
+                sprintf('Refresh saldo selesai. Berhasil: %d account, gagal: %d account.', $refreshedCount, $failedCount)
+            );
+    }
+
     public function health(PolymarketAccount $account): JsonResponse
     {
         return response()->json([
@@ -138,6 +213,8 @@ class PolymarketAccountController extends Controller
             'last_validated_at' => $account->last_validated_at?->toISOString(),
             'last_error_code' => $account->last_error_code,
             'is_active' => $account->is_active,
+            'last_balance_usd' => $account->last_balance_usd,
+            'last_balance_refreshed_at' => $account->last_balance_refreshed_at?->toISOString(),
         ]);
     }
 }

@@ -24,6 +24,12 @@ class PolymarketAccountService
      *     risk_profile?:?string,
      *     max_exposure_usd?:?float,
      *     max_order_size?:?float,
+     *     max_open_positions?:?int,
+     *     max_open_positions_per_market?:?int,
+     *     max_order_size_in_usd?:?float,
+     *     daily_limit_mode?:?string,
+     *     max_daily_loss_position?:?float,
+     *     max_daily_win_position?:?float,
      *     cooldown_seconds?:?int
      * }  $payload
      */
@@ -48,6 +54,12 @@ class PolymarketAccountService
             'risk_profile' => $payload['risk_profile'] ?? 'standard',
             'max_exposure_usd' => $payload['max_exposure_usd'] ?? null,
             'max_order_size' => $payload['max_order_size'] ?? null,
+            'max_open_positions' => $payload['max_open_positions'] ?? 0,
+            'max_open_positions_per_market' => $payload['max_open_positions_per_market'] ?? 0,
+            'max_order_size_in_usd' => $payload['max_order_size_in_usd'] ?? 0,
+            'daily_limit_mode' => $payload['daily_limit_mode'] ?? 'count',
+            'max_daily_loss_position' => $payload['max_daily_loss_position'] ?? 0,
+            'max_daily_win_position' => $payload['max_daily_win_position'] ?? 0,
             'cooldown_seconds' => $payload['cooldown_seconds'] ?? 0,
             'credential_status' => 'pending',
             'is_active' => true,
@@ -75,6 +87,12 @@ class PolymarketAccountService
      *     risk_profile?:?string,
      *     max_exposure_usd?:?float,
      *     max_order_size?:?float,
+     *     max_open_positions?:?int,
+     *     max_open_positions_per_market?:?int,
+     *     max_order_size_in_usd?:?float,
+     *     daily_limit_mode?:?string,
+     *     max_daily_loss_position?:?float,
+     *     max_daily_win_position?:?float,
      *     cooldown_seconds?:?int
      * }  $payload
      */
@@ -98,6 +116,12 @@ class PolymarketAccountService
             'risk_profile' => $payload['risk_profile'] ?? $account->risk_profile,
             'max_exposure_usd' => $payload['max_exposure_usd'] ?? $account->max_exposure_usd,
             'max_order_size' => $payload['max_order_size'] ?? $account->max_order_size,
+            'max_open_positions' => $payload['max_open_positions'] ?? $account->max_open_positions,
+            'max_open_positions_per_market' => $payload['max_open_positions_per_market'] ?? $account->max_open_positions_per_market,
+            'max_order_size_in_usd' => $payload['max_order_size_in_usd'] ?? $account->max_order_size_in_usd,
+            'daily_limit_mode' => $payload['daily_limit_mode'] ?? $account->daily_limit_mode,
+            'max_daily_loss_position' => $payload['max_daily_loss_position'] ?? $account->max_daily_loss_position,
+            'max_daily_win_position' => $payload['max_daily_win_position'] ?? $account->max_daily_win_position,
             'cooldown_seconds' => $payload['cooldown_seconds'] ?? $account->cooldown_seconds,
         ]);
 
@@ -106,6 +130,23 @@ class PolymarketAccountService
             'account.update',
             'success',
             'Profile Polymarket account diperbarui.'
+        );
+
+        return $account->refresh();
+    }
+
+    public function refreshStoredBalance(PolymarketAccount $account, float $balanceUsd): PolymarketAccount
+    {
+        $account->update([
+            'last_balance_usd' => $balanceUsd,
+            'last_balance_refreshed_at' => now(),
+        ]);
+        $this->auditService->log(
+            $account,
+            'account.balance.refresh',
+            'success',
+            'Saldo account berhasil diperbarui.',
+            ['last_balance_usd' => $balanceUsd]
         );
 
         return $account->refresh();
